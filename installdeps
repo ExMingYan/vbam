@@ -583,7 +583,7 @@ fedora_installdeps() {
                 ;;
         esac
         # install static deps
-        for pkg in zlib gettext SDL3 wxWidgets3 openal-soft; do
+        for pkg in zlib gettext sdl3 wxWidgets3 openal-soft; do
             set -- "$@" "${target}-${pkg}-static"
         done
 
@@ -759,7 +759,7 @@ rhel_installdeps() {
                 ;;
         esac
         # install static deps
-        for pkg in zlib gettext SDL3 wxWidgets openal-soft; do
+        for pkg in zlib gettext sdl3 wxWidgets openal-soft; do
             set -- "$@" "${target}-${pkg}-static"
         done
 
@@ -1103,7 +1103,7 @@ windows_installdeps() {
             ;;
     esac
 
-    pkgs="$pkgs SDL3 wxWidgets3.2 zlib binutils cmake crt-git headers-git make pkgconf tools-git windows-default-manifest libmangle-git ninja gdb ccache openal"
+    pkgs="$pkgs sdl3 wxWidgets3.2 zlib binutils cmake crt-git headers-git make pkgconf tools-git windows-default-manifest libmangle-git ninja gdb ccache openal"
 
     case "$target" in
         *x86_64)
