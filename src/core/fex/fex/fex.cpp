@@ -33,6 +33,14 @@ BLARGG_EXPORT const fex_type_t* fex_type_list( void )
 			// Modify blargg_config.h to change type list, NOT this file
 			fex_7z_type,
 			fex_gz_type,
+            fex_tar_type,
+            #if FEX_ENABLE_LZMA
+                fex_xz_type,
+                fex_lz_type,
+            #endif
+            #if FEX_ENABLE_BZ2
+                fex_bz2_type,
+            #endif
 			#if FEX_ENABLE_RAR
 				fex_rar_type,
 			#endif
@@ -41,7 +49,7 @@ BLARGG_EXPORT const fex_type_t* fex_type_list( void )
 		fex_bin_type,
 		NULL
 	};
-	
+
 	return fex_type_list_;
 }
 
@@ -60,8 +68,19 @@ BLARGG_EXPORT fex_err_t fex_init( void )
 	return blargg_ok;
 }
 
-BLARGG_EXPORT const char* fex_identify_header( void const* header )
+BLARGG_EXPORT const char* fex_identify_header(const void* header)
 {
+	const unsigned char* data = static_cast<const unsigned char*>(header);
+
+	// Safely detect .xz (magic bytes at offset 0)
+	if (memcmp(data, "\xFD\x37\x7A\x58\x5A\x00", 6) == 0)
+		return ".xz";
+
+	// Safely detect .tar (magic string at offset 257)
+	const char tar_magic[] = "ustar";
+	if (memcmp(data + 257, tar_magic, sizeof(tar_magic)) == 0 && data[262] == 0x00)
+		return ".tar";
+
 	unsigned four = get_be32( header );
 	switch ( four )
 	{
@@ -77,6 +96,8 @@ BLARGG_EXPORT const char* fex_identify_header( void const* header )
 	case 0x41724301: return ".arc";
 	case 0x4D534346: return ".cab";
 	case 0x5A4F4F20: return ".zoo";
+    case 0x04224D18: return ".lz4";
+    case 0x4C5A4950: return ".lz";
 	}
 
 	unsigned three = four >> 8;
@@ -130,6 +151,7 @@ static int is_archive_extension( const char str [] )
 		".dmg",
 		".gz",
 		".lha",
+        ".lz4",
 		".lz",
 		".lzh",
 		".lzma",
@@ -139,8 +161,10 @@ static int is_archive_extension( const char str [] )
 		".rar",
 		".sit",
 		".sitx",
+        ".tar",
 		".tgz",
 		".tlz",
+        ".xz",
 		".z",
 		".zip",
 		".zoo",
@@ -177,7 +201,7 @@ BLARGG_EXPORT fex_err_t fex_identify_file( fex_type_t* type_out, const char path
 	*type_out = NULL;
 	
 	fex_type_t type = fex_identify_extension( path );
-	
+
 	// Unsupported extension?
 	if ( !type )
 		return blargg_ok; // reject
@@ -192,11 +216,11 @@ BLARGG_EXPORT fex_err_t fex_identify_file( fex_type_t* type_out, const char path
 		{
 			char h [fex_identify_header_size];
 			RETURN_ERR( in.read( h, sizeof h ) );
-			
+
 			type = fex_identify_extension( fex_identify_header( h ) );
 		}
 	}
-	
+
 	*type_out = type;
 	return blargg_ok;
 }

@@ -3,6 +3,15 @@
 
 #include <wx/string.h>
 #include <wx/dynlib.h>
+#include <windows.h>
+
+extern "C" {
+    typedef void (__cdecl *func_win_sparkle_init)();
+    typedef void (__cdecl *func_win_sparkle_check_update_with_ui)();
+    typedef void (__cdecl *func_win_sparkle_set_appcast_url)(const char*);
+    typedef void (__cdecl *func_win_sparkle_set_app_details)(const wchar_t*, const wchar_t*, const wchar_t*);
+    typedef void (__cdecl *func_win_sparkle_cleanup)();
+}
 
 class WinSparkleDllWrapper {
 public:
@@ -11,22 +20,13 @@ private:
     WinSparkleDllWrapper();
     ~WinSparkleDllWrapper();
 
-    wxDynamicLibrary *winsparkle_dll = nullptr;
+    HMODULE winsparkle_dll;
 
-    typedef void (*func_win_sparkle_init)();
-    func_win_sparkle_init                 winsparkle_init                 = nullptr;
-
-    typedef void (*func_win_sparkle_check_update_with_ui)();
-    func_win_sparkle_check_update_with_ui winsparkle_check_update_with_ui = nullptr;
-
-    typedef void (*func_win_sparkle_set_appcast_url)(const char *);
-    func_win_sparkle_set_appcast_url      winsparkle_set_appcast_url      = nullptr;
-
-    typedef void (*func_win_sparkle_set_app_details)(const wchar_t*, const wchar_t*, const wchar_t*);
-    func_win_sparkle_set_app_details      winsparkle_set_app_details      = nullptr;
-
-    typedef void (*func_win_sparkle_cleanup)();
-    func_win_sparkle_cleanup              winsparkle_cleanup              = nullptr;
+    func_win_sparkle_init                 winsparkle_init = NULL;
+    func_win_sparkle_check_update_with_ui winsparkle_check_update_with_ui = NULL;
+    func_win_sparkle_set_appcast_url      winsparkle_set_appcast_url      = NULL;
+    func_win_sparkle_set_app_details      winsparkle_set_app_details      = NULL;
+    func_win_sparkle_cleanup              winsparkle_cleanup              = NULL;
 
     wxString temp_file_name;
 

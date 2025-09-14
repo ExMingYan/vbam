@@ -11,6 +11,16 @@
 #include "wx/wxvbam.h"
 
 #ifndef NO_METAL
+bool is_macosx_1013_or_newer()
+{
+    // Mac OS X 10.13 version check
+    if (NSAppKitVersionNumber >= 1561) {
+        return true;
+    }
+
+    return false;
+}
+
 bool is_macosx_1012_or_newer()
 {
     // Mac OS X 10.12 version check
@@ -258,7 +268,7 @@ void MetalDrawingPanel::DrawArea()
         DrawingPanelInit();
     
     if (systemColorDepth == 8) {
-        srcPitch = std::ceil(width * scale) + 2;
+        srcPitch = std::ceil(width * scale) + 4;
     } else if (systemColorDepth == 16) {
         srcPitch = std::ceil(width * scale * 2) + 4;
     } else if (systemColorDepth == 24) {
@@ -292,7 +302,7 @@ void MetalDrawingPanel::DrawArea()
                 src_pos++;
             }
             pos++;
-            src_pos += 2;
+            src_pos += 4;
         }
 
         _texture = loadTextureUsingData(dst);

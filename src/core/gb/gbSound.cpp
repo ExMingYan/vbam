@@ -16,7 +16,7 @@ extern long soundSampleRate; // current sound quality
 gb_effects_config_t gb_effects_config = { false, 0.20f, 0.15f, false };
 
 static gb_effects_config_t gb_effects_config_current;
-static Simple_Effects_Buffer* stereo_buffer;
+static Simple_Effects_Buffer* stereo_buffer = 0;
 static Gb_Apu* gb_apu;
 
 static float soundVolume_ = -1;
@@ -117,7 +117,7 @@ static void reset_apu()
     soundTicks = 0;
 }
 
-static void remake_stereo_buffer()
+static void gb_remake_stereo_buffer()
 {
     // APU
     if (!gb_apu) {
@@ -172,7 +172,7 @@ void gbSoundReset()
 {
     SOUND_CLOCK_TICKS = 35112;
 
-    remake_stereo_buffer();
+    gb_remake_stereo_buffer();
     reset_apu();
 
     soundPaused = 1;
@@ -227,7 +227,7 @@ void gbSoundSetSampleRate(long sampleRate)
             soundSampleRate = sampleRate;
         }
 
-        remake_stereo_buffer();
+        gb_remake_stereo_buffer();
     }
 }
 

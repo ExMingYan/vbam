@@ -1681,8 +1681,6 @@ bool MainFrame::BindControls()
     // the idle loop on wxGTK
     wxIdleEvent::SetMode(wxIDLE_PROCESS_SPECIFIED);
 
-    BindAppIcon();
-
     // NOOP if no status area
     SetStatusText(wxT(""));
 
@@ -1832,26 +1830,25 @@ bool MainFrame::BindControls()
         // remove this item from the menu completely
         wxMenuItem* gdbmi = XRCITEM("GDBMenu");
         gdbmi->GetMenu()->Remove(gdbmi);
-        gdbmi = nullptr;
+        gdbmi = NULL;
 #endif  // !defined(VBAM_ENABLE_DEBUGGER)
 #ifdef NO_LINK
         // remove this item from the menu completely
         wxMenuItem* linkmi = XRCITEM("LinkMenu");
         linkmi->GetMenu()->Remove(linkmi);
-        linkmi = nullptr;
+        linkmi = NULL;
 #endif
 
 #ifdef __WXMAC__
         // Remove hide menubar in the UI Config submenu on macOS, because it is meaningless there.
         wxMenuItem* hide_menu_bar = XRCITEM("HideMenuBar");
         hide_menu_bar->GetMenu()->Remove(hide_menu_bar);
-        hide_menu_bar = nullptr;
+        hide_menu_bar = NULL;
 #endif
 
-
         // if a recent menu is present, save its location
-        wxMenuItem* recentmi = XRCITEM("RecentMenu");
-
+        wxMenuItem *recentmi = XRCITEM("RecentMenu");
+            
         if (recentmi && recentmi->IsSubMenu()) {
             recent = recentmi->GetSubMenu();
             gopts.recent->UseMenu(recent);
@@ -1924,6 +1921,42 @@ bool MainFrame::BindControls()
         MenuOptionIntRadioValue("LinkType2Wireless", gopts.gba_link_type, 2);
         MenuOptionIntRadioValue("LinkType3GameCube", gopts.gba_link_type, 3);
         MenuOptionIntRadioValue("LinkType4Gameboy", gopts.gba_link_type, 4);
+        MenuOptionIntRadioValue("Language0", OPTION(kLocale), wxLANGUAGE_DEFAULT);
+        MenuOptionIntRadioValue("Language1", OPTION(kLocale), wxLANGUAGE_BULGARIAN);
+        MenuOptionIntRadioValue("Language2", OPTION(kLocale), wxLANGUAGE_BRETON);
+        MenuOptionIntRadioValue("Language3", OPTION(kLocale), wxLANGUAGE_CZECH);
+        MenuOptionIntRadioValue("Language5", OPTION(kLocale), wxLANGUAGE_GREEK);
+        MenuOptionIntRadioValue("Language6", OPTION(kLocale), wxLANGUAGE_ENGLISH_US);
+        MenuOptionIntRadioValue("Language7", OPTION(kLocale), wxLANGUAGE_SPANISH_LATIN_AMERICA);
+        MenuOptionIntRadioValue("Language8", OPTION(kLocale), wxLANGUAGE_SPANISH_COLOMBIA);
+        MenuOptionIntRadioValue("Language9", OPTION(kLocale), wxLANGUAGE_SPANISH_PERU);
+        MenuOptionIntRadioValue("Language10", OPTION(kLocale), wxLANGUAGE_SPANISH_US);
+        MenuOptionIntRadioValue("Language11", OPTION(kLocale), wxLANGUAGE_SPANISH);
+        MenuOptionIntRadioValue("Language12", OPTION(kLocale), wxLANGUAGE_FRENCH_FRANCE);
+        MenuOptionIntRadioValue("Language13", OPTION(kLocale), wxLANGUAGE_FRENCH);
+        MenuOptionIntRadioValue("Language14", OPTION(kLocale), wxLANGUAGE_GALICIAN);
+        MenuOptionIntRadioValue("Language15", OPTION(kLocale), wxLANGUAGE_HEBREW_ISRAEL);
+        MenuOptionIntRadioValue("Language16", OPTION(kLocale), wxLANGUAGE_HUNGARIAN_HUNGARY);
+        MenuOptionIntRadioValue("Language17", OPTION(kLocale), wxLANGUAGE_HUNGARIAN);
+        MenuOptionIntRadioValue("Language18", OPTION(kLocale), wxLANGUAGE_INDONESIAN);
+        MenuOptionIntRadioValue("Language19", OPTION(kLocale), wxLANGUAGE_ITALIAN_ITALY);
+        MenuOptionIntRadioValue("Language20", OPTION(kLocale), wxLANGUAGE_JAPANESE);
+        MenuOptionIntRadioValue("Language21", OPTION(kLocale), wxLANGUAGE_KOREAN_KOREA);
+        MenuOptionIntRadioValue("Language22", OPTION(kLocale), wxLANGUAGE_KOREAN);
+        MenuOptionIntRadioValue("Language23", OPTION(kLocale), wxLANGUAGE_MALAY_MALAYSIA);
+        MenuOptionIntRadioValue("Language24", OPTION(kLocale), wxLANGUAGE_NORWEGIAN);
+        MenuOptionIntRadioValue("Language25", OPTION(kLocale), wxLANGUAGE_DUTCH);
+        MenuOptionIntRadioValue("Language26", OPTION(kLocale), wxLANGUAGE_POLISH_POLAND);
+        MenuOptionIntRadioValue("Language27", OPTION(kLocale), wxLANGUAGE_POLISH);
+        MenuOptionIntRadioValue("Language28", OPTION(kLocale), wxLANGUAGE_PORTUGUESE_BRAZILIAN);
+        MenuOptionIntRadioValue("Language29", OPTION(kLocale), wxLANGUAGE_PORTUGUESE_PORTUGAL);
+        MenuOptionIntRadioValue("Language30", OPTION(kLocale), wxLANGUAGE_RUSSIAN_RUSSIA);
+        MenuOptionIntRadioValue("Language31", OPTION(kLocale), wxLANGUAGE_SWEDISH);
+        MenuOptionIntRadioValue("Language32", OPTION(kLocale), wxLANGUAGE_TURKISH);
+        MenuOptionIntRadioValue("Language33", OPTION(kLocale), wxLANGUAGE_UKRAINIAN);
+        MenuOptionIntRadioValue("Language34", OPTION(kLocale), wxLANGUAGE_URDU_PAKISTAN);
+        MenuOptionIntRadioValue("Language35", OPTION(kLocale), wxLANGUAGE_CHINESE_CHINA);
+        MenuOptionBool("ExternalTranslations", OPTION(kExternalTranslations));
     }
 
     for (size_t i = 0; i < checkable_mi.size(); i++) {

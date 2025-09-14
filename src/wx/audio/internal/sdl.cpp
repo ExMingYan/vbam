@@ -104,7 +104,7 @@ void SDLAudio::deinit() {
     SDL_UnlockMutex(mutex);
     
     SDL_DestroyMutex(mutex);
-    mutex = nullptr;
+    mutex = NULL;
     
     SDL_CloseAudioDevice(sound_device);
 
@@ -113,8 +113,6 @@ void SDLAudio::deinit() {
 
 SDLAudio::~SDLAudio() {
     deinit();
-
-    SDL_QuitSubSystem(SDL_INIT_AUDIO);
 }
 
 bool SDLAudio::init(long sampleRate) {
@@ -154,13 +152,13 @@ bool SDLAudio::init(long sampleRate) {
 #endif
         return false;
     }
-    
+
 #ifdef ENABLE_SDL3
-    if (SDL_WasInit(SDL_INIT_AUDIO) == false) {
+    if (SDL_Init(SDL_INIT_AUDIO) == false) {
 #else
-    if (SDL_WasInit(SDL_INIT_AUDIO) < 0) {
+    if (SDL_Init(SDL_INIT_AUDIO) < 0) {
 #endif
-        SDL_Init(SDL_INIT_AUDIO);
+        return false;
     }
     
 #ifdef ENABLE_SDL3

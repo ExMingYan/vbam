@@ -38,6 +38,8 @@
 #include "wx/wxlogdebug.h"
 #include "wx/compat_generic_file_dialog.h"
 
+extern wxLocale *wxvbam_locale;
+
 template <typename T>
 void CheckPointer(T pointer)
 {
@@ -85,7 +87,9 @@ public:
             return false;
         }
     }
+#ifndef VBAM_WX_MAC_PATCHED_FOR_ALERT_SOUND
     bool ProcessEvent(wxEvent& event) final;
+#endif
 
     wxString GetConfigDir();
     wxString GetDataDir();
@@ -146,7 +150,7 @@ private:
     config::EmulatedGamepad emulated_gamepad_;
 
     wxPathList config_path;
-    char* home = nullptr;
+    char* home = NULL;
 
     widgets::SdlPoller sdl_poller_;
     widgets::KeyboardInputHandler keyboard_input_handler_;
@@ -308,7 +312,7 @@ public:
     // required for event handling
     DECLARE_EVENT_TABLE();
 
-protected:
+public:
     virtual void BindAppIcon();
 
 private:
@@ -565,7 +569,7 @@ protected:
     uint32_t mouse_active_time;
     wxPoint mouse_last_pos;
 #ifdef __WXMSW__
-    HMENU current_hmenu = nullptr;
+    HMENU current_hmenu = NULL;
 #endif
 
     DECLARE_DYNAMIC_CLASS(GameArea)
@@ -607,6 +611,8 @@ public:
     virtual void OnSize(wxSizeEvent& ev);
     wxWindow* GetWindow() { return dynamic_cast<wxWindow*>(this); }
     virtual bool Destroy() { return GetWindow()->Destroy(); }
+    wxFrame *d3dframe = NULL;
+
 protected:
     virtual void DrawArea(wxWindowDC&) = 0;
     virtual void DrawOSD(wxWindowDC&);

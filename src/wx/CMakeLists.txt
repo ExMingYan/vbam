@@ -69,16 +69,29 @@ if(NOT ZIP_PROGRAM)
         if(NOT DEFINED POWERSHELL)
             message(FATAL_ERROR "Powershell is required for extraction.")
         endif()
-
-        # Get zip binaries from wxrc.
-        file(DOWNLOAD "https://www.willus.com/archive/zip64/infozip_binaries_win32.zip" ${CMAKE_CURRENT_BINARY_DIR}/infozip_binaries_win32.zip)
-
+        set(_url "https://www.willus.com/archive/zip64/infozip_binaries_win32.zip")
+        set(_path "${CMAKE_CURRENT_BINARY_DIR}/infozip_binaries_win32.zip")
+        set(_sha "b338a0f35e1f849d3466d4260fd8a51f2afe9cdf136cc07cc4d54b00cee13650")
+        foreach(_i RANGE 1 3)
+            # Get zip binaries from wxrc.
+            file(DOWNLOAD "${_url}" "${_path}" SHOW_PROGRESS STATUS _s)
+            list(GET _s 0 _c)
+            if(_c EQUAL 0)
+                file(SHA256 "${_path}" _h)
+                file(SIZE "${_path}" _z)
+                if(_h STREQUAL _sha AND _z GREATER 0)
+                    break()
+                endif()
+            endif()
+            file(REMOVE "${_path}")
+            if(_i EQUAL 3)
+                message(FATAL_ERROR "Download failed or SHA256 mismatch after 3 attempts.")
+            endif()
+        endforeach()
         # Unzip it.
-        execute_process(
-            COMMAND "${POWERSHELL}" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::ExtractToDirectory('${CMAKE_CURRENT_BINARY_DIR}/infozip_binaries_win32.zip', '${CMAKE_CURRENT_BINARY_DIR}'); }"
-        )
-
-        set(ZIP_PROGRAM ${CMAKE_CURRENT_BINARY_DIR}/zip.exe CACHE STRING "zip compressor executable" FORCE)
+        execute_process(COMMAND "${POWERSHELL}" -NoLogo -NoProfile -ExecutionPolicy Bypass
+            -Command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::ExtractToDirectory('${_path}', '${CMAKE_CURRENT_BINARY_DIR}'); }")
+        set(ZIP_PROGRAM "${CMAKE_CURRENT_BINARY_DIR}/zip.exe" CACHE STRING "zip compressor executable" FORCE)
     endif()
     if(ZIP_PROGRAM)
         set(ZIP_PROGRAM "${ZIP_PROGRAM}" CACHE STRING "zip compressor executable" FORCE)
@@ -278,6 +291,7 @@ function(configure_wx_target target)
 
     # OpenAL.
     if(ENABLE_OPENAL)
+        _add_compile_definitions(VBAM_ENABLE_OPENAL)
         if(OPENAL_STATIC)
             _add_compile_definitions(AL_LIBTYPE_STATIC)
         endif()
@@ -308,19 +322,19 @@ function(configure_wx_target target)
     # FAudio.
     if(ENABLE_FAUDIO)
         _add_compile_definitions(VBAM_ENABLE_FAUDIO)
-        if(MSVC)
-            _add_link_libraries(FAudio::FAudio)
+
+        if(APPLE)
+            _add_link_libraries(FAudio)
         else()
-            if(WIN32)
-                if(MINGW AND VBAM_STATIC)
-                    _add_link_libraries(FAudio.a)
-                else()
-                    _add_link_libraries(FAudio)
-                endif()
-                _add_link_libraries(dxguid uuid winmm ole32 advapi32 user32 mfplat mfreadwrite mfuuid propsys)
+            if(VBAM_STATIC)
+                _add_link_libraries(FAudio::FAudio-static)
             else()
-                _add_link_libraries(FAudio)
+                _add_link_libraries(FAudio::FAudio)
             endif()
+        endif()
+
+        if(WIN32)
+            _add_link_libraries(dxguid uuid winmm ole32 advapi32 user32 mfplat mfreadwrite mfuuid propsys)
         endif()
     endif()
 
@@ -331,6 +345,10 @@ function(configure_wx_target target)
 
     # SDL.
     _add_link_libraries(${VBAM_SDL_LIBS})
+
+    if(APPLE)
+        _add_link_libraries(sharpyuv)
+    endif()
 
     # OpenGL.
     if(ENABLE_OPENGL)
@@ -389,6 +407,9 @@ if(APPLE)
             default
         )
     endif()
+
+# Needed for CoreAudio.
+    target_compile_options(visualboyadvance-m PRIVATE -Wno-error=elaborated-enum-base)
 endif()
 
 target_sources(visualboyadvance-m PRIVATE ${VBAM_WX_COMMON} ${VBAM_ICON_PATH})
@@ -416,6 +437,7 @@ target_link_libraries(
     vbam-components-draw-text
     vbam-components-filters
     vbam-components-filters-agb
+    vbam-components-filters-cgb
     vbam-components-filters-interframe
     vbam-components-user-config
     vbam-wx-config
@@ -474,6 +496,7 @@ if(WIN32)
         PRIVATE
         audio/internal/dsound.cpp
         wxvbam.rc
+        wxvbam_translations.rc
     )
     target_link_libraries(visualboyadvance-m
         dxguid dsound wsock32 ws2_32 imm32 version winmm)
@@ -503,7 +526,7 @@ endif()
 # and adjust link command when making a static binary
 if(CMAKE_COMPILER_IS_GNUCXX AND VBAM_STATIC)
     # some dists don't have a static libpthread
-    set(CMAKE_CXX_LINK_EXECUTABLE "${CMAKE_CXX_LINK_EXECUTABLE} -static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lpthread ")
+    set(CMAKE_CXX_LINK_EXECUTABLE "${CMAKE_CXX_LINK_EXECUTABLE} -static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lpthread")
 
     if(WIN32)
         add_custom_command(
@@ -770,9 +793,9 @@ if(APPLE)
     set(CMAKE_INSTALL_RPATH "@loader_path/../Frameworks")
 endif()
 
-if(WIN32 AND (X86_64 OR ARM64 OR X86_32) AND ENABLE_ONLINEUPDATES)
+if(WIN32 AND (X86_64 OR ARM64 OR X86) AND ENABLE_ONLINEUPDATES)
     if(NOT DEFINED WINSPARKLE_BIN_RELEASE_DIR)
-        set(WINSPARKLE_BIN_RELEASE_DIR ${CMAKE_SOURCE_DIR}/win32-deps/WinSparkle-0.8.1)
+        set(WINSPARKLE_BIN_RELEASE_DIR ${CMAKE_SOURCE_DIR}/win32-deps/WinSparkle-0.9.1)
     endif()
 
     target_include_directories(
@@ -780,25 +803,41 @@ if(WIN32 AND (X86_64 OR ARM64 OR X86_32) AND ENABLE_ONLINEUPDATES)
         PRIVATE ${WINSPARKLE_BIN_RELEASE_DIR}/include
     )
 
-    if(X86_64)
+    if(X86_64 AND MINGW)
+        set(WINSPARKLE_DLL ${WINSPARKLE_BIN_RELEASE_DIR}/mingw/x86_64/WinSparkle.dll)
+    elseif(X86 AND MINGW)
+        set(WINSPARKLE_DLL ${WINSPARKLE_BIN_RELEASE_DIR}/mingw/i686/WinSparkle.dll)
+    elseif(X86_64)
         set(WINSPARKLE_DLL ${WINSPARKLE_BIN_RELEASE_DIR}/x64/Release/WinSparkle.dll)
     elseif(ARM64)
         set(WINSPARKLE_DLL ${WINSPARKLE_BIN_RELEASE_DIR}/ARM64/Release/WinSparkle.dll)
-    elseif(X86_32)
+    elseif(X86)
         set(WINSPARKLE_DLL ${WINSPARKLE_BIN_RELEASE_DIR}/Release/WinSparkle.dll)
     endif()
 
-    configure_file(autoupdater/wxmsw/winsparkle-path.h.in ${CMAKE_BINARY_DIR}/winsparkle-path.h)
+    target_sources(visualboyadvance-m PRIVATE
+        autoupdater/wxmsw/autoupdater.cpp
+        autoupdater/wxmsw/winsparkle-rc.h
+        autoupdater/wxmsw/winsparkle-wrapper.cpp
+        autoupdater/wxmsw/winsparkle-wrapper.h)
+
+    configure_file(autoupdater/wxmsw/winsparkle-path.h.in ${CMAKE_SOURCE_DIR}/src/wx/winsparkle-path.h)
 endif()
 
 if(APPLE AND ENABLE_ONLINEUPDATES)
     include(FetchContent)
     FetchContent_Declare(Sparkle
-        URL "https://github.com/sparkle-project/Sparkle/releases/download/2.3.0-beta.2/Sparkle-2.3.0-beta.2.tar.xz"
-        URL_HASH SHA256=6875388aae23c1705c3956c62a9c967f4b788bc4f1dad93ab5645bc6096ef13b
+        URL "https://github.com/andyvand/Sparkle/releases/download/Release/Sparkle-2.7.1-MacOSX10.10.tar.xz"
+        URL_HASH SHA256=2d2419118c2ee8fe6e740a953b74cfa3b367606e4bab3fe0ab63332a5324ac5f
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
     FetchContent_MakeAvailable(Sparkle)
+
+    target_sources(visualboyadvance-m PRIVATE
+        autoupdater/autoupdater.h
+        autoupdater/macos/autoupdater.cpp
+        autoupdater/macos/sparkle-wrapper.h
+        autoupdater/macos/sparkle-wrapper.mm)
 
     find_library(SPARKLE_FRAMEWORK
         NAMES Sparkle
@@ -828,7 +867,7 @@ if(APPLE AND ENABLE_ONLINEUPDATES)
         COMMAND ${CCS8}
     )
 
-    TARGET_LINK_LIBRARIES(visualboyadvance-m ${SPARKLE_FRAMEWORK})
+    TARGET_LINK_LIBRARIES(visualboyadvance-m $<LINK_LIBRARY:WEAK_FRAMEWORK,${SPARKLE_FRAMEWORK}>)
 endif()
 
 if(NOT WIN32 AND NOT APPLE)
@@ -1021,6 +1060,10 @@ if(APPLE)
 endif()
 
 if(APPLE AND UPSTREAM_RELEASE)
+#    if(WX_MAC_PATCHED)
+#        target_compile_definitions(visualboyadvance-m PRIVATE VBAM_WX_MAC_PATCHED_FOR_ALERT_SOUND)
+#    endif()
+
     if(CMAKE_BUILD_TYPE MATCHES "^(Release|MinSizeRel)$")
         find_program(STRIP_PROGRAM strip)
 

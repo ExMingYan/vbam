@@ -25,10 +25,10 @@
 ////////////////////////////////////////////////////////////
 // Headers
 ////////////////////////////////////////////////////////////
-#include <SFML/Network/Ftp.hpp>
-#include <SFML/Network/IpAddress.hpp>
+#include "../../../include/SFML/Network/Ftp.hpp"
+#include "../../../include/SFML/Network/IpAddress.hpp"
 
-#include <SFML/System/Err.hpp>
+#include "../../../include/SFML/System/Err.hpp"
 
 #include <algorithm>
 #include <array>
@@ -299,7 +299,7 @@ Ftp::Response Ftp::download(const ghc::filesystem::path& remoteFile, const ghc::
         {
             // Create the file and truncate it if necessary
             const ghc::filesystem::path filepath = localPath / remoteFile.filename();
-            std::ofstream               file(filepath, std::ios_base::binary | std::ios_base::trunc);
+            std::ofstream               file(filepath.c_str(), std::ios_base::binary | std::ios_base::trunc);
             if (!file)
                 return Response(Response::Status::InvalidFile);
 
@@ -329,7 +329,7 @@ Ftp::Response Ftp::upload(const ghc::filesystem::path& localFile,
                           bool                         append)
 {
     // Get the contents of the file to send
-    std::ifstream file(localFile, std::ios_base::binary);
+    std::ifstream file(localFile.c_str(), std::ios_base::binary);
     if (!file)
         return Response(Response::Status::InvalidFile);
 

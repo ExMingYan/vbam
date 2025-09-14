@@ -40,7 +40,7 @@ protected:
     void AdjustViewport();
     void RefreshGL();
 #ifndef wxGL_IMPLICIT_CONTEXT
-    wxGLContext* ctx = nullptr;
+    wxGLContext* ctx = NULL;
 #endif
     bool SetContext();
     void DrawingPanelInit();
@@ -48,6 +48,8 @@ protected:
     int texsize;
 };
 #endif
+
+#include <wx/string.h>
 
 class SDLDrawingPanel : public DrawingPanel {
 public:
@@ -67,6 +69,9 @@ private:
     SDL_Window *sdlwindow = NULL;
     SDL_Texture *texture = NULL;
     SDL_Renderer *renderer = NULL;
+    wxString renderername = wxEmptyString;
+
+    DECLARE_EVENT_TABLE()
 };
 
 #if defined(__WXMSW__) && !defined(NO_D3D)

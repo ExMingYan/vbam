@@ -33,7 +33,7 @@ include(FindPackageHandleStandardArgs)
 
 # The default components were taken from a survey over other FindFFMPEG.cmake files
 if (NOT FFmpeg_FIND_COMPONENTS)
-  set(FFmpeg_FIND_COMPONENTS AVCODEC AVFORMAT AVUTIL)
+  set(FFmpeg_FIND_COMPONENTS AVFORMAT AVCODEC AVUTIL SWSCALE SWRESAMPLE X264 X265)
 endif ()
 
 #
@@ -65,7 +65,7 @@ macro(find_component _component _pkgconfig _library _header)
      if (PKG_CONFIG_FOUND)
        pkg_check_modules(PC_${_component} ${_pkgconfig})
      endif ()
-  endif (NOT WIN32)
+ endif (NOT WIN32)
 
   find_path(${_component}_INCLUDE_DIRS ${_header}
     HINTS
@@ -97,16 +97,23 @@ endmacro()
 
 # Check for cached results. If there are skip the costly part.
 if (NOT FFMPEG_LIBRARIES)
+  set(x265_lib "x265")
+
+  if(CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg" AND FFMPEG_STATIC)
+    set(x265_lib "x265-static")
+  endif()
 
   # Check for all possible component.
-  find_component(AVCODEC    libavcodec    avcodec  libavcodec/avcodec.h)
   find_component(AVFORMAT   libavformat   avformat libavformat/avformat.h)
+  find_component(AVCODEC    libavcodec    avcodec  libavcodec/avcodec.h)
   find_component(AVDEVICE   libavdevice   avdevice libavdevice/avdevice.h)
   find_component(AVUTIL     libavutil     avutil   libavutil/avutil.h)
   find_component(AVFILTER   libavfilter   avfilter libavfilter/avfilter.h)
   find_component(SWSCALE    libswscale    swscale  libswscale/swscale.h)
   find_component(POSTPROC   libpostproc   postproc libpostproc/postprocess.h)
   find_component(SWRESAMPLE libswresample swresample libswresample/swresample.h)
+  find_component(X264       x264          x264      x264.h)
+  find_component(X265       x265          "${x265_lib}" x265.h)
 
   # Check if the required components were found and add their stuff to the FFMPEG_* vars.
   foreach (_component ${FFmpeg_FIND_COMPONENTS})

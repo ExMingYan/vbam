@@ -25,11 +25,11 @@
 ////////////////////////////////////////////////////////////
 // Headers
 ////////////////////////////////////////////////////////////
-#include <SFML/Network/Http.hpp>
-#include <SFML/Network/IpAddress.hpp>
-#include <SFML/Network/SocketImpl.hpp>
+#include "../../../include/SFML/Network/Http.hpp"
+#include "../../../include/SFML/Network/IpAddress.hpp"
+#include "../../SFML/Network/SocketImpl.hpp"
 
-#include <SFML/System/Err.hpp>
+#include "../../../include/SFML/System/Err.hpp"
 
 #include <istream>
 #include <ostream>
@@ -100,7 +100,7 @@ static const char *inet_ntop(int af, const void *src, char *dst, socklen_t size)
 #endif
 
     ZeroMemory(&ss, sizeof(ss));
-    ss.ss_family = af;
+    ss.ss_family = (ADDRESS_FAMILY)af;
 
     switch(af) {
         case AF_INET:

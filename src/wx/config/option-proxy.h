@@ -22,6 +22,7 @@ static constexpr std::array<Option::Type, kNbOptions> kOptionsTypes = {
     /*kDispScale*/ Option::Type::kDouble,
     /*kDispStretch*/ Option::Type::kBool,
     /*kSDLRenderer*/ Option::Type::kString,
+    /*kDispColorCorrectionProfile*/ Option::Type::kColorCorrectionProfile,
 
     /// GB
     /*kGBBiosFile*/ Option::Type::kString,
@@ -36,6 +37,7 @@ static constexpr std::array<Option::Type, kNbOptions> kOptionsTypes = {
     /*kGBPrintScreenCap*/ Option::Type::kBool,
     /*kGBROMDir*/ Option::Type::kString,
     /*kGBGBCROMDir*/ Option::Type::kString,
+    /*kGBLighten*/ Option::Type::kUnsigned,
 
     /// GBA
     /*kGBABiosFile*/ Option::Type::kString,
@@ -51,6 +53,7 @@ static constexpr std::array<Option::Type, kNbOptions> kOptionsTypes = {
     /*kGBALinkType*/ Option::Type::kInt,
 #endif
     /*kGBAROMDir*/ Option::Type::kString,
+    /*kGBADarken*/ Option::Type::kUnsigned,
 
     /// General
     /*kGenAutoLoadLastState*/ Option::Type::kBool,
@@ -141,6 +144,8 @@ static constexpr std::array<Option::Type, kNbOptions> kOptionsTypes = {
     /*kSoundDSoundHWAccel*/ Option::Type::kBool,
     /*kSoundUpmix*/ Option::Type::kBool,
     /*kSoundVolume*/ Option::Type::kInt,
+    /*kLocale*/ Option::Type::kInt,
+    /*kExternalTranslations*/ Option::Type::kBool,
 };
 
 // Less verbose accessor for a specific OptionID with compile-time type checks.
@@ -339,6 +344,25 @@ public:
 
     bool operator=(RenderMethod value) { return Set(value); }
     operator RenderMethod() const { return Get(); }
+
+private:
+    Option* option_;
+};
+
+template <OptionID ID>
+class OptionProxy<
+    ID,
+    typename std::enable_if<kOptionsTypes[static_cast<size_t>(ID)] ==
+                            Option::Type::kColorCorrectionProfile>::type> {
+public:
+    OptionProxy() : option_(Option::ByID(ID)) {}
+    ~OptionProxy() = default;
+
+    ColorCorrectionProfile Get() const { return option_->GetColorCorrectionProfile(); }
+    bool Set(ColorCorrectionProfile value) { return option_->SetColorCorrectionProfile(value); }
+
+    bool operator=(ColorCorrectionProfile value) { return Set(value); }
+    operator ColorCorrectionProfile() const { return Get(); }
 
 private:
     Option* option_;

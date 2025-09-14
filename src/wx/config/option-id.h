@@ -18,6 +18,7 @@ enum class OptionID {
     kDispScale,
     kDispStretch,
     kSDLRenderer,
+    kDispColorCorrectionProfile,
 
     /// GB
     kGBBiosFile,
@@ -32,6 +33,7 @@ enum class OptionID {
     kGBPrintScreenCap,
     kGBROMDir,
     kGBGBCROMDir,
+    kGBLighten,
 
     /// GBA
     kGBABiosFile,
@@ -47,6 +49,7 @@ enum class OptionID {
     kGBALinkType,
 #endif
     kGBAROMDir,
+    kGBADarken,
 
     /// General
     kGenAutoLoadLastState,
@@ -137,6 +140,8 @@ enum class OptionID {
     kSoundDSoundHWAccel,
     kSoundUpmix,
     kSoundVolume,
+    kLocale,
+    kExternalTranslations,
 
     // Do not add anything under here.
     Last,

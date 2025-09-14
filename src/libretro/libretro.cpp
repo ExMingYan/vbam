@@ -10,6 +10,7 @@
 #include "scrc32.h"
 
 #include "components/filters_agb/filters_agb.h"
+#include "components/filters_cgb/filters_cgb.h"
 #include "components/filters_interframe/interframe.h"
 #include "core/base/check.h"
 #include "core/base/system.h"
@@ -184,9 +185,9 @@ static void* gb_rtcdata_prt(void)
     case gbCartData::MapperType::kGameShark:
     case gbCartData::MapperType::kUnknown:
         VBAM_NOTREACHED();
-        return nullptr;
+        return NULL;
     }
-    return nullptr;
+    return NULL;
 }
 
 static size_t gb_rtcdata_size(void)
@@ -611,7 +612,15 @@ void retro_init(void)
     if (environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &dir) && dir)
         snprintf(retro_system_directory, sizeof(retro_system_directory), "%s", dir);
 
-#ifdef FRONTEND_SUPPORTS_RGB565
+#ifdef FRONTEND_SUPPORT_BGR1555
+    systemColorDepth = 16;
+    systemRedShift = 0;
+    systemGreenShift = 5;
+    systemBlueShift = 10;
+    enum retro_pixel_format rgb1555 = RETRO_PIXEL_FORMAT_0RGB1555;
+    if (environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &rgb1555) && log_cb)
+        log_cb(RETRO_LOG_INFO, "Frontend supports BGR1555 - will use that instead of XRGB1555.\n");
+#elif defined(FRONTEND_SUPPORTS_RGB565)
     systemColorDepth = 16;
     systemRedShift = 11;
     systemGreenShift = 6;
@@ -1012,6 +1021,11 @@ static int option_analogDeadzone;
 static int option_gyroSensitivity, option_tiltSensitivity;
 static bool option_swapAnalogSticks;
 
+static int color_mode = 0;
+static int prev_color_mode = 0;
+static float color_change = 0.0f;
+static float prev_color_change = 0.0f;
+
 static void update_variables(bool startup)
 {
     struct retro_variable var = { NULL, NULL };
@@ -1215,14 +1229,47 @@ static void update_variables(bool startup)
         gbColorOption = (!strcmp(var.value, "enabled"));
     }
 
+    var.key = "vbam_lcdfilter_type";
+    var.value = NULL;
+
+    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+        prev_color_mode = color_mode;
+        if (!strcmp(var.value, "sRGB"))
+            color_mode = 0;
+        else if (!strcmp(var.value, "DCI"))
+            color_mode = 1;
+        else if (!strcmp(var.value, "Rec2020"))
+            color_mode = 2;
+    }
+
+    var.key = "vbam_color_change";
+    var.value = NULL;
+
+    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+        prev_color_change = color_change;
+        color_change = ((float)atoi(var.value)) / 100;
+    }
+
     var.key = "vbam_lcdfilter";
     var.value = NULL;
 
     if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
         bool prev_lcdfilter = option_lcdfilter;
         option_lcdfilter = (!strcmp(var.value, "enabled")) ? true : false;
-        if (prev_lcdfilter != option_lcdfilter)
-            gbafilter_update_colors(option_lcdfilter);
+        if ((prev_color_change != color_change) || (prev_color_mode != color_mode)) {
+            if (type == IMAGE_GBA) {
+                gbafilter_set_params(color_mode, color_change);
+            } else {
+                gbcfilter_set_params(color_mode, color_change);
+            }
+        }
+        if ((prev_lcdfilter != option_lcdfilter) || (prev_color_change != color_change) || (prev_color_mode != color_mode)) {
+            if (type == IMAGE_GBA) {
+                gbafilter_update_colors(option_lcdfilter);
+            } else {
+                gbcfilter_update_colors(option_lcdfilter);
+            }
+        }
     }
 
     var.key = "vbam_interframeblending";
@@ -1632,12 +1679,26 @@ bool retro_load_game(const struct retro_game_info *game)
       desc[1].start=0x02000000; desc[1].select=0xFF000000; desc[1].len=0x40000;   desc[1].ptr=g_workRAM;//slow WRAM
       /* TODO: if SRAM is flash, use start=0 addrspace="S" instead */
       desc[2].start=0x0E000000; desc[2].select=0;          desc[2].len=g_flashSize; desc[2].ptr=flashSaveMemory;//SRAM
-      desc[3].start=0x08000000; desc[3].select=0;          desc[3].len=romSize;   desc[3].ptr=g_rom;//ROM
-      desc[3].flags=RETRO_MEMDESC_CONST;
-      desc[4].start=0x0A000000; desc[4].select=0;          desc[4].len=romSize;   desc[4].ptr=g_rom;//ROM mirror 1
-      desc[4].flags=RETRO_MEMDESC_CONST;
-      desc[5].start=0x0C000000; desc[5].select=0;          desc[5].len=romSize;   desc[5].ptr=g_rom;//ROM mirror 2
-      desc[5].flags=RETRO_MEMDESC_CONST;
+
+      char ident = 0;
+      memcpy(&ident, &g_rom[0xAC], 1);
+
+      if (ident == 'M') {
+         desc[3].start=0x08000000; desc[3].select=0;          desc[3].len=SIZE_ROM;  desc[3].ptr=g_rom;//ROM
+         desc[3].flags=RETRO_MEMDESC_CONST;
+         desc[4].start=0x0A000000; desc[4].select=0;          desc[4].len=SIZE_ROM;  desc[4].ptr=g_rom;//ROM mirror 1
+         desc[4].flags=RETRO_MEMDESC_CONST;
+         desc[5].start=0x0C000000; desc[5].select=0;          desc[5].len=SIZE_ROM;  desc[5].ptr=g_rom;//ROM mirror 2
+         desc[5].flags=RETRO_MEMDESC_CONST;
+      } else {
+         desc[3].start=0x08000000; desc[3].select=0;          desc[3].len=romSize;   desc[3].ptr=g_rom;//ROM
+         desc[3].flags=RETRO_MEMDESC_CONST;
+         desc[4].start=0x0A000000; desc[4].select=0;          desc[4].len=romSize;   desc[4].ptr=g_rom;//ROM mirror 1
+         desc[4].flags=RETRO_MEMDESC_CONST;
+         desc[5].start=0x0C000000; desc[5].select=0;          desc[5].len=romSize;   desc[5].ptr=g_rom;//ROM mirror 2
+         desc[5].flags=RETRO_MEMDESC_CONST;
+      }
+
       desc[6].start=0x00000000; desc[6].select=0;          desc[6].len=0x4000;    desc[6].ptr=g_bios;//BIOS
       desc[6].flags=RETRO_MEMDESC_CONST;
       desc[7].start=0x06000000; desc[7].select=0xFF000000; desc[7].len=0x18000;   desc[7].ptr=g_vram;//VRAM
@@ -1732,7 +1793,7 @@ bool retro_load_game(const struct retro_game_info *game)
 
    update_input_descriptors();    // Initialize input descriptors and info
    update_variables(false);
-   uint8_t* state_buf = (uint8_t*)malloc(2000000);
+   uint8_t* state_buf = (uint8_t*)malloc(2000080);
    serialize_size = core->emuWriteState(state_buf);
    free(state_buf);
 
@@ -1741,9 +1802,9 @@ bool retro_load_game(const struct retro_game_info *game)
    return emulating;
 }
 
-bool retro_load_game_special(unsigned,  const struct retro_game_info *, size_t)
+bool retro_load_game_special(unsigned,  const struct retro_game_info *game, size_t)
 {
-    return false;
+    return retro_load_game(game);
 }
 
 void retro_unload_game(void)
@@ -1773,8 +1834,10 @@ bool systemCanChangeSoundQuality(void)
 void systemDrawScreen(void)
 {
     unsigned pitch = systemWidth * (systemColorDepth >> 3);
+    
     if (ifb_filter_func)
         ifb_filter_func(g_pix, pitch, systemWidth, systemHeight);
+
     video_cb(g_pix, systemWidth, systemHeight, pitch);
 }
 

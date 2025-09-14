@@ -27,9 +27,77 @@
 #include "wx/config/option-proxy.h"
 #include "wx/config/option.h"
 #include "wx/dialogs/game-maker.h"
+#include "wx/wxvbam.h"
+#include "wx/widgets/group-check-box.h"
+#include "wx/widgets/user-input-ctrl.h"
+#include "wx/widgets/utils.h"
 
 #define GetXRCDialog(n) \
     wxStaticCast(wxGetApp().frame->FindWindowByName(n), wxDialog)
+
+void RefreshFrame(void)
+{
+    wxXmlResource* xr = wxXmlResource::Get();
+    const wxRect client_rect(
+        OPTION(kGeomWindowX).Get(),
+        OPTION(kGeomWindowY).Get(),
+        OPTION(kGeomWindowWidth).Get(),
+        OPTION(kGeomWindowHeight).Get());
+    const bool is_fullscreen = OPTION(kGeomFullScreen);
+    const bool is_maximized = OPTION(kGeomIsMaximized);
+
+    // note: if linking statically, next 2 pull in lot of unused code
+    // maybe in future if not wxSHARED, load only builtin-needed handlers
+    xr->InitAllHandlers();
+    xr->AddHandler(new widgets::GroupCheckBoxXmlHandler());
+    xr->AddHandler(new widgets::UserInputCtrlXmlHandler());
+    wxInitAllImageHandlers();
+
+    wxGetApp().SetExitOnFrameDelete(false);
+
+    if (wxGetApp().frame)
+        wxGetApp().frame->Destroy();
+
+    wxGetApp().frame = wxDynamicCast(xr->LoadFrame(NULL, "MainFrame"), MainFrame);
+    if (!wxGetApp().frame) {
+        wxLogError(_("Could not create main window"));
+        return;
+    }
+
+    wxConfigBase* cfg = wxConfigBase::Get();
+    gopts.recent = new wxFileHistory(10);
+    cfg->SetPath("/Recent");
+    gopts.recent->Load(*cfg);
+    cfg->SetPath("/");
+    cfg->Flush();
+
+    // Create() cannot be overridden easily
+    if (!wxGetApp().frame->BindControls()) {
+        return;
+    }
+
+    // Ensure we are not drawing out of bounds.
+    if (widgets::GetDisplayRect().Intersects(client_rect)) {
+        wxGetApp().frame->SetSize(client_rect);
+    }
+
+    if (is_maximized) {
+        wxGetApp().frame->Maximize();
+    }
+
+    if (is_fullscreen && wxGetApp().pending_load != wxEmptyString)
+        wxGetApp().frame->ShowFullScreen(is_fullscreen);
+
+    wxGetApp().frame->Show(true);
+    
+    // Windows can render the taskbar icon late if this is done in MainFrame
+    // It may also not update at all until the Window has been minimized/restored
+    // This seems timing related, possibly based on HWND
+    // So do this here since it reliably draws the Taskbar icon on Window creation.
+    wxGetApp().frame->BindAppIcon();
+
+    wxGetApp().SetExitOnFrameDelete(true);
+}
 
 void MainFrame::GetMenuOptionBool(const wxString& menuName, bool* field)
 {
@@ -132,14 +200,20 @@ EVT_HANDLER(wxID_OPEN, "Open ROM...")
     wxString pats = _(
         "Game Boy Advance Files (*.agb;*.gba;*.bin;*.elf;*.mb;*.zip;*.7z;*.rar)|"
         "*.agb;*.gba;*.bin;*.elf;*.mb;"
+        "*.agb.lz;*.gba.lz;*.bin.lz;*.elf.lz;*.mb.lz;"
+        "*.agb.xz;*.gba.xz;*.bin.xz;*.elf.xz;*.mb.xz;"
+        "*.agb.bz2;*.gba.bz2;*.bin.bz2;*.elf.bz2;*.mb.bz2;"
         "*.agb.gz;*.gba.gz;*.bin.gz;*.elf.gz;*.mb.gz;"
         "*.agb.z;*.gba.z;*.bin.z;*.elf.z;*.mb.z;"
         "*.zip;*.7z;*.rar|"
         "Game Boy Files (*.dmg;*.gb;*.gbc;*.cgb;*.sgb;*.zip;*.7z;*.rar)|"
         "*.dmg;*.gb;*.gbc;*.cgb;*.sgb;"
+        "*.dmg.lz;*.gb.lz;*.gbc.lz;*.cgb.lz;*.sgb.lz;"
+        "*.dmg.xz;*.gb.xz;*.gbc.xz;*.cgb.xz;*.sgb.xz;"
+        "*.dmg.bz2;*.gb.bz2;*.gbc.bz2;*.cgb.bz2;*.sgb.bz2;"
         "*.dmg.gz;*.gb.gz;*.gbc.gz;*.cgb.gz;*.sgb.gz;"
         "*.dmg.z;*.gb.z;*.gbc.z;*.cgb.z;*.sgb.z;"
-        "*.zip;*.7z;*.rar|");
+        "*.tar;*.zip;*.7z;*.rar|");
     pats.append(wxALL_FILES);
 
     wxFileDialog dlg(this, _("Open ROM file"), gba_rom_dir, "",
@@ -168,9 +242,12 @@ EVT_HANDLER(OpenGB, "Open GB...")
     wxString pats = _(
         "Game Boy Files (*.dmg;*.gb;*.gbc;*.cgb;*.sgb;*.zip;*.7z;*.rar)|"
         "*.dmg;*.gb;*.gbc;*.cgb;*.sgb;"
+        "*.dmg.lz;*.gb.lz;*.gbc.lz;*.cgb.lz;*.sgb.lz;"
+        "*.dmg.xz;*.gb.xz;*.gbc.xz;*.cgb.xz;*.sgb.xz;"
+        "*.dmg.bz2;*.gb.bz2;*.gbc.bz2;*.cgb.bz2;*.sgb.bz2;"
         "*.dmg.gz;*.gb.gz;*.gbc.gz;*.cgb.gz;*.sgb.gz;"
         "*.dmg.z;*.gb.z;*.gbc.z;*.cgb.z;*.sgb.z;"
-        "*.zip;*.7z;*.rar|");
+        "*.tar;*.zip;*.7z;*.rar|");
     pats.append(wxALL_FILES);
     wxFileDialog dlg(this, _("Open GB ROM file"), gb_rom_dir, "",
         pats,
@@ -197,9 +274,12 @@ EVT_HANDLER(OpenGBC, "Open GBC...")
     wxString pats = _(
         "Game Boy Color Files (*.dmg;*.gb;*.gbc;*.cgb;*.sgb;*.zip;*.7z;*.rar)|"
         "*.dmg;*.gb;*.gbc;*.cgb;*.sgb;"
+        "*.dmg.lz;*.gb.lz;*.gbc.lz;*.cgb.lz;*.sgb.lz;"
+        "*.dmg.xz;*.gb.xz;*.gbc.xz;*.cgb.xz;*.sgb.xz;"
+        "*.dmg.bz2;*.gb.bz2;*.gbc.bz2;*.cgb.bz2;*.sgb.bz2;"
         "*.dmg.gz;*.gb.gz;*.gbc.gz;*.cgb.gz;*.sgb.gz;"
         "*.dmg.z;*.gb.z;*.gbc.z;*.cgb.z;*.sgb.z;"
-        "*.zip;*.7z;*.rar|");
+        "*.tar;*.zip;*.7z;*.rar|");
     pats.append(wxALL_FILES);
     wxFileDialog dlg(this, _("Open GBC ROM file"), gbc_rom_dir, "",
         pats,
@@ -2250,7 +2330,7 @@ EVT_HANDLER(UpdateEmu, "Check for updates...")
 EVT_HANDLER(FactoryReset, "Factory Reset...")
 {
     wxMessageDialog dlg(
-        nullptr, _("YOUR CONFIGURATION WILL BE DELETED!\n\nAre you sure?"),
+        NULL, _("YOUR CONFIGURATION WILL BE DELETED!\n\nAre you sure?"),
         _("FACTORY RESET"), wxYES_NO | wxNO_DEFAULT | wxCENTRE);
 
     if (dlg.ShowModal() == wxID_YES) {
@@ -2631,13 +2711,753 @@ EVT_HANDLER(LinkConfigure, "Link options...")
 #endif
 }
 
+EVT_HANDLER(ExternalTranslations, "Use external translations")
+{
+    GetMenuOptionConfig("ExternalTranslations", config::OptionID::kExternalTranslations);
+}
+
+EVT_HANDLER(Language0, "Default Language")
+{
+    OPTION(kLocale) = wxLANGUAGE_DEFAULT;
+    
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+    
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_DEFAULT);
+    
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language1, "Bulgarian")
+{
+    OPTION(kLocale) = wxLANGUAGE_BULGARIAN;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_BULGARIAN);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language2, "Breton")
+{
+    OPTION(kLocale) = wxLANGUAGE_BRETON;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_BRETON);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language3, "Czech")
+{
+    OPTION(kLocale) = wxLANGUAGE_CZECH;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_CZECH);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language5, "Greek")
+{
+    OPTION(kLocale) = wxLANGUAGE_GREEK;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_GREEK);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language6, "English (US)")
+{
+    OPTION(kLocale) = wxLANGUAGE_ENGLISH_US;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_ENGLISH_US);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language7, "Spanish (Latin American)")
+{
+    OPTION(kLocale) = wxLANGUAGE_SPANISH_LATIN_AMERICA;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_SPANISH_LATIN_AMERICA);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language8, "Spanish (Colombia)")
+{
+    OPTION(kLocale) = wxLANGUAGE_SPANISH_COLOMBIA;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_SPANISH_COLOMBIA);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language9, "Spanish (Peru)")
+{
+    OPTION(kLocale) = wxLANGUAGE_SPANISH_PERU;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_SPANISH_PERU);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language10, "Spanish (US)")
+{
+    OPTION(kLocale) = wxLANGUAGE_SPANISH_US;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_SPANISH_US);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language11, "Spanish")
+{
+    OPTION(kLocale) = wxLANGUAGE_SPANISH;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_SPANISH);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language12, "French (France)")
+{
+    OPTION(kLocale) = wxLANGUAGE_FRENCH_FRANCE;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_FRENCH_FRANCE);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language13, "French")
+{
+    OPTION(kLocale) = wxLANGUAGE_FRENCH;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_FRENCH);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language14, "Galician")
+{
+    OPTION(kLocale) = wxLANGUAGE_GALICIAN;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_GALICIAN);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language15, "Hebrew (Israel)")
+{
+    OPTION(kLocale) = wxLANGUAGE_HEBREW_ISRAEL;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_HEBREW_ISRAEL);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language16, "Hungarian (Hungary)")
+{
+    OPTION(kLocale) = wxLANGUAGE_HUNGARIAN_HUNGARY;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_HUNGARIAN_HUNGARY);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language17, "Hungarian")
+{
+    OPTION(kLocale) = wxLANGUAGE_HUNGARIAN;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_HUNGARIAN);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language18, "Indonesian")
+{
+    OPTION(kLocale) = wxLANGUAGE_INDONESIAN;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_INDONESIAN);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language19, "Italian")
+{
+    OPTION(kLocale) = wxLANGUAGE_ITALIAN_ITALY;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_ITALIAN_ITALY);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language20, "Japanese")
+{
+    OPTION(kLocale) = wxLANGUAGE_JAPANESE;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_JAPANESE);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language21, "Korean (Korea)")
+{
+    OPTION(kLocale) = wxLANGUAGE_KOREAN_KOREA;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_KOREAN_KOREA);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language22, "Korean")
+{
+    OPTION(kLocale) = wxLANGUAGE_KOREAN;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_KOREAN);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language23, "Malay (Malaysia)")
+{
+    OPTION(kLocale) = wxLANGUAGE_MALAY_MALAYSIA;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_MALAY_MALAYSIA);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language24, "Norwegian")
+{
+    OPTION(kLocale) = wxLANGUAGE_NORWEGIAN;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_NORWEGIAN);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language25, "Dutch")
+{
+    OPTION(kLocale) = wxLANGUAGE_DUTCH;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_DUTCH);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language26, "Polish (Poland)")
+{
+    OPTION(kLocale) = wxLANGUAGE_POLISH_POLAND;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_POLISH_POLAND);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language27, "Polish")
+{
+    OPTION(kLocale) = wxLANGUAGE_POLISH;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_POLISH);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language28, "Portuguese (Brazil)")
+{
+    OPTION(kLocale) = wxLANGUAGE_PORTUGUESE_BRAZILIAN;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_PORTUGUESE_BRAZILIAN);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language29, "Portuguese (Portugal)")
+{
+    OPTION(kLocale) = wxLANGUAGE_PORTUGUESE_PORTUGAL;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_PORTUGUESE_PORTUGAL);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language30, "Russian (Russia)")
+{
+    OPTION(kLocale) = wxLANGUAGE_RUSSIAN_RUSSIA;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_RUSSIAN_RUSSIA);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language31, "Swedish")
+{
+    OPTION(kLocale) = wxLANGUAGE_SWEDISH;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_SWEDISH);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language32, "Turkish")
+{
+    OPTION(kLocale) = wxLANGUAGE_TURKISH;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_TURKISH);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language33, "Ukrainian")
+{
+    OPTION(kLocale) = wxLANGUAGE_UKRAINIAN;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_UKRAINIAN);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language34, "Urdu (Pakistan)")
+{
+    OPTION(kLocale) = wxLANGUAGE_URDU_PAKISTAN;
+
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_URDU_PAKISTAN);
+
+    update_opts();
+    RefreshFrame();
+}
+
+EVT_HANDLER(Language35, "Chinese (China)")
+{
+    OPTION(kLocale) = wxLANGUAGE_CHINESE_CHINA;
+    
+    if (wxvbam_locale != NULL)
+        wxDELETE(wxvbam_locale);
+    
+    wxvbam_locale = new wxLocale;
+    wxvbam_locale->Init(OPTION(kLocale), wxLOCALE_LOAD_DEFAULT);
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam", wxLANGUAGE_CHINESE_CHINA);
+    
+    update_opts();
+    RefreshFrame();
+}
+
 // Dummy for disabling system key bindings
 EVT_HANDLER_MASK(NOOP, "Do nothing", CMDEN_NEVER)
 {
 }
 
 // The following have been moved to dialogs
-// I will not implement as command unless there is great demand
+// I will not implement as command unless there is great demand cvbn,;
 // CheatsList
 //EVT_HANDLER(CheatsLoad, "Load Cheats...")
 //EVT_HANDLER(CheatsSave, "Save Cheats...")

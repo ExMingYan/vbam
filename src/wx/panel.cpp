@@ -35,6 +35,7 @@
 #include "components/draw_text/draw_text.h"
 #include "components/filters/filters.h"
 #include "components/filters_agb/filters_agb.h"
+#include "components/filters_cgb/filters_cgb.h"
 #include "components/filters_interframe/interframe.h"
 #include "core/base/check.h"
 #include "core/base/file_util.h"
@@ -175,7 +176,7 @@ GameArea::GameArea()
       gb_declick_observer_(
           config::OptionID::kSoundGBDeclicking,
           [&](config::Option* option) { gbSoundSetDeclicking(option->GetBool()); }),
-      lcd_filters_observer_({config::OptionID::kGBLCDFilter, config::OptionID::kGBALCDFilter},
+      lcd_filters_observer_({config::OptionID::kGBLCDFilter, config::OptionID::kGBADarken, config::OptionID::kGBLighten, config::OptionID::kDispColorCorrectionProfile, config::OptionID::kGBALCDFilter},
                             std::bind(&GameArea::UpdateLcdFilter, this)),
       audio_rate_observer_(config::OptionID::kSoundAudioRate,
                            std::bind(&GameArea::OnAudioRateChanged, this)),
@@ -932,12 +933,27 @@ void GameArea::AdjustSize(bool force)
 void GameArea::ResetPanel() {
     if (panel) {
         panel->Destroy();
-        panel = nullptr;
+        panel = NULL;
     }
 }
 
 void GameArea::ShowFullScreen(bool full)
 {
+    if ((OPTION(kDispRenderMethod) == config::RenderMethod::kSDL) && (OPTION(kSDLRenderer) == wxString("direct3d"))) {
+        if (panel == NULL)
+            return;
+
+        if (panel->d3dframe == NULL)
+            return;
+
+        if (panel->d3dframe->IsFullScreen() == false)
+            panel->d3dframe->ShowFullScreen(true);
+        else
+            panel->d3dframe->ShowFullScreen(false);
+ 
+        return;
+    }
+
     if (full == fullscreen) {
         // in case the tlw somehow lost its mind, force it to proper mode
         if (wxGetApp().frame->IsFullScreen() != fullscreen)
@@ -1182,20 +1198,14 @@ void GameArea::OnIdle(wxIdleEvent& event)
     if (!panel) {
         switch (OPTION(kDispRenderMethod)) {
             case config::RenderMethod::kSimple:
-                no_border = false;
-
                 panel = new BasicDrawingPanel(this, basic_width, basic_height);
                 break;
             case config::RenderMethod::kSDL:
-                no_border = false;
-
                 panel = new SDLDrawingPanel(this, basic_width, basic_height);
                 break;
 #ifdef __WXMAC__
 #ifndef NO_METAL
             case config::RenderMethod::kMetal:
-                no_border = false;
-
                 if (is_macosx_1012_or_newer()) {
                     panel =
                     new MetalDrawingPanel(this, basic_width, basic_height);
@@ -1206,27 +1216,17 @@ void GameArea::OnIdle(wxIdleEvent& event)
                 break;
 #endif
             case config::RenderMethod::kQuartz2d:
-                no_border = false;
-
                 panel =
                     new Quartz2DDrawingPanel(this, basic_width, basic_height);
                 break;
 #endif
 #ifndef NO_OGL
             case config::RenderMethod::kOpenGL:
-                if (out_8) {
-                    no_border = true;
-                } else {
-                    no_border = false;
-                }
-
                 panel = new GLDrawingPanel(this, basic_width, basic_height);
                 break;
 #endif
 #if defined(__WXMSW__) && !defined(NO_D3D)
             case config::RenderMethod::kDirect3d:
-                no_border = false;
-
                 panel = new DXDrawingPanel(this, basic_width, basic_height);
                 break;
 #endif
@@ -1235,7 +1235,13 @@ void GameArea::OnIdle(wxIdleEvent& event)
                 return;
         }
 
-        wxWindow* w = panel->GetWindow();
+        wxWindow* w = NULL;
+
+        w = panel->GetWindow();
+
+        if (panel->d3dframe != NULL) {
+             panel->d3dframe->Bind(VBAM_EVT_USER_INPUT, &GameArea::OnUserInput, this);
+        }
 
         // set up event handlers
         w->Bind(VBAM_EVT_USER_INPUT, &GameArea::OnUserInput, this);
@@ -1459,7 +1465,7 @@ DrawingPanelBase::DrawingPanelBase(int _width, int _height)
       pixbuf1(0),
       pixbuf2(0),
       nthreads(0),
-      rpi_(nullptr) {
+      rpi_(NULL) {
     memset(delta, 0xff, sizeof(delta));
 
     if (OPTION(kDispFilter) == config::Filter::kPlugin) {
@@ -1619,12 +1625,12 @@ public:
         const int procy = height_ * threadno_ / nthreads_;
         height_ = height_ * (threadno_ + 1) / nthreads_ - procy;
         const int inbpp = systemColorDepth >> 3;
-        const int inrb = out_8 ? 2 : out_16  ? 2
+        const int inrb = out_8 ? 4 : out_16  ? 2
                          : out_24 ? 0 : 1;
         const int instride = (width_ + inrb) * inbpp;
         const int instride32 = width_ * 4;
         const int outbpp = systemColorDepth >> 3;
-        const int outrb = out_8 ? 2 : out_24 ? 0 : 4;
+        const int outrb = out_8 ? 4 : out_24 ? 0 : 4;
         const int outstride = std::ceil(width_ * outbpp * scale_) + outrb;
         const int outstride32 = std::ceil(width_ * 4 * scale_);
         uint8_t *dest = NULL;
@@ -1687,7 +1693,7 @@ public:
                             pos++;
                             src_pos++;
                         }
-                        src_pos += 2;
+                        src_pos += 4;
                     }
                 } else if (out_16) {
                     uint16_t *src16_ = (uint16_t *)src_;
@@ -1740,7 +1746,7 @@ public:
                             pos++;
                             dst_pos += 4;
                         }
-                        pos += 2;
+                        pos += 4;
                     }
                 } else if (out_16) {
                     uint16_t *dest16_ = (uint16_t *)dest;
@@ -1982,7 +1988,7 @@ void DrawingPanelBase::DrawArea(uint8_t** data)
     //   if filtering, this is filter output, retained for redraws
     //   if not filtering, we still retain current image for redraws
     int outbpp = systemColorDepth >> 3;
-    int outrb = out_8 ? 2 : out_24 ? 0 : 4;
+    int outrb = out_8 ? 4 : out_24 ? 0 : 4;
     int outstride = std::ceil(width * outbpp * scale) + outrb;
 
     if (!pixbuf2) {
@@ -2264,6 +2270,11 @@ DrawingPanelBase::~DrawingPanelBase()
     disableKeyboardBackgroundInput();
 }
 
+
+BEGIN_EVENT_TABLE(SDLDrawingPanel, wxPanel)
+EVT_PAINT(SDLDrawingPanel::PaintEv)
+END_EVENT_TABLE()
+
 SDLDrawingPanel::SDLDrawingPanel(wxWindow* parent, int _width, int _height)
     : DrawingPanel(parent, _width, _height)
 {
@@ -2284,9 +2295,14 @@ SDLDrawingPanel::~SDLDrawingPanel()
 {
     if (did_init)
     {
-        SDL_DestroyWindow(sdlwindow);
-        SDL_DestroyTexture(texture);
-        SDL_DestroyRenderer(renderer);
+        if (sdlwindow != NULL)
+             SDL_DestroyWindow(sdlwindow);
+
+        if (texture != NULL)
+             SDL_DestroyTexture(texture);
+
+        if (renderer != NULL)
+             SDL_DestroyRenderer(renderer);
 
         SDL_QuitSubSystem(SDL_INIT_VIDEO);
 
@@ -2396,6 +2412,17 @@ void SDLDrawingPanel::DrawingPanelInit()
         if (SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X11_WINDOW_NUMBER, xid) == false)
 #elif defined(__WXMAC__)
         if (SDL_SetPointerProperty(props, SDL_PROP_WINDOW_CREATE_COCOA_VIEW_POINTER, wxGetApp().frame->GetPanel()->GetHandle()) == false)
+#elif defined(__WXMSW__)
+        if (OPTION(kSDLRenderer) == wxString("direct3d")) {
+            d3dframe = new wxFrame(GetWindow(), wxID_ANY, "visualboyadvance-m SDL DX9", wxDefaultPosition, wxDefaultSize, wxDEFAULT_FRAME_STYLE, "SDL_DX9");
+            d3dframe->Show();
+
+            if (SDL_SetPointerProperty(props, SDL_PROP_WINDOW_CREATE_WIN32_HWND_POINTER, d3dframe->GetHandle()) == false)
+            {
+                systemScreenMessage(_("Failed to set DX9 window"));
+                return;
+            }
+        } else if (SDL_SetPointerProperty(props, SDL_PROP_WINDOW_CREATE_WIN32_HWND_POINTER, GetHandle()) == false)
 #else
         if (SDL_SetPointerProperty(props, "sdl2-compat.external_window", GetWindow()->GetHandle()) == false)
 #endif
@@ -2403,28 +2430,32 @@ void SDLDrawingPanel::DrawingPanelInit()
             systemScreenMessage(_("Failed to set parent window"));
             return;
         }
+
 #ifdef __WXGTK__
     }
 #endif
-            
+
+    if (SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_OPENGL_BOOLEAN, true) == false) {
+        systemScreenMessage(_("Failed to set OpenGL properties"));
+    }
+
     sdlwindow = SDL_CreateWindowWithProperties(props);
-            
+    SDL_DestroyProperties(props);
+
     if (sdlwindow == NULL) {
         systemScreenMessage(_("Failed to create SDL window"));
         return;
     }
-            
-    SDL_DestroyProperties(props);
-            
+
     if (OPTION(kSDLRenderer) == wxString("default")) {
         renderer = SDL_CreateRenderer(sdlwindow, NULL);
-        log("SDL renderer: default");
     } else {
         renderer = SDL_CreateRenderer(sdlwindow, renderer_name.mb_str());
-        log("SDL renderer: %s", (const char *)renderer_name.mb_str());
 
         if (renderer == NULL) {
             log("ERROR: Renderer creating failed, using default renderer");
+            printf("SDL Error: %s\n", SDL_GetError());
+
             renderer = SDL_CreateRenderer(sdlwindow, NULL);
         }
     }
@@ -2433,6 +2464,9 @@ void SDLDrawingPanel::DrawingPanelInit()
         systemScreenMessage(_("Failed to create SDL renderer"));
         return;
     }
+
+    renderername = wxString(SDL_GetRendererName(renderer));
+    log("SDL renderer: %s", (const char*)renderername.mb_str());
 #else
 #ifdef __WXGTK__
     sdlwindow = SDL_CreateWindowFrom((void *)xid);
@@ -2446,7 +2480,7 @@ void SDLDrawingPanel::DrawingPanelInit()
         systemScreenMessage(_("Failed to create SDL window"));
         return;
     }
-            
+
     if (OPTION(kSDLRenderer) == wxString("default")) {
         renderer = SDL_CreateRenderer(sdlwindow, -1, 0);
         log("SDL renderer: default");
@@ -2478,31 +2512,66 @@ void SDLDrawingPanel::DrawingPanelInit()
         systemScreenMessage(_("Failed to create SDL renderer"));
         return;
     }
+
+    renderername = OPTION(kSDLRenderer);
 #endif
-            
+
     if (out_8) {
 #ifdef ENABLE_SDL3
-        texture = SDL_CreateTexture(renderer, SDL_GetPixelFormatForMasks(8, 0xE0, 0x1C, 0x03, 0x00), SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        if (renderername == wxString("direct3d")) {
+            texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB332, SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        } else {
+            texture = SDL_CreateTexture(renderer, SDL_GetPixelFormatForMasks(8, 0xE0, 0x1C, 0x03, 0x00), 
+SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        }
 #else
-        texture = SDL_CreateTexture(renderer, SDL_MasksToPixelFormatEnum(8, 0xE0, 0x1C, 0x03, 0x00), SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        if (renderername == wxString("direct3d")) {
+            texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB332, SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        } else {
+            texture = SDL_CreateTexture(renderer, SDL_MasksToPixelFormatEnum(8, 0xE0, 0x1C, 0x03, 0x00), SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        }
 #endif
     } else if (out_16) {
 #ifdef ENABLE_SDL3
-        texture = SDL_CreateTexture(renderer, SDL_GetPixelFormatForMasks(16, 0x7C00, 0x03E0, 0x001F, 0x0000), SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        if (renderername == wxString("direct3d")) {
+            texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        } else {
+            texture = SDL_CreateTexture(renderer, SDL_GetPixelFormatForMasks(16, 0x7C00, 0x03E0, 0x001F, 0x0000), SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        }
 #else
-        texture = SDL_CreateTexture(renderer, SDL_MasksToPixelFormatEnum(16, 0x7C00, 0x03E0, 0x001F, 0x0000), SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        if (renderername == wxString("direct3d")) {
+            texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        } else {
+            texture = SDL_CreateTexture(renderer, SDL_MasksToPixelFormatEnum(16, 0x7C00, 0x03E0, 0x001F, 0x0000), SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        }
 #endif
     } else if (out_24) {
 #ifdef ENABLE_SDL3
-        texture = SDL_CreateTexture(renderer, SDL_GetPixelFormatForMasks(24, 0x000000FF, 0x0000FF00, 0x00FF0000, 0x00000000), SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        if (renderername == wxString("direct3d")) {
+            texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        } else {
+            texture = SDL_CreateTexture(renderer, SDL_GetPixelFormatForMasks(24, 0x000000FF, 0x0000FF00, 0x00FF0000, 0x00000000), SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        }
 #else
-        texture = SDL_CreateTexture(renderer, SDL_MasksToPixelFormatEnum(24, 0x000000FF, 0x0000FF00, 0x00FF0000, 0x00000000), SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        if (renderername == wxString("direct3d")) {
+            texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        } else {
+            texture = SDL_CreateTexture(renderer, SDL_MasksToPixelFormatEnum(24, 0x000000FF, 0x0000FF00, 0x00FF0000, 0x00000000), SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        }
 #endif
     } else {
 #ifdef ENABLE_SDL3
-        texture = SDL_CreateTexture(renderer, SDL_GetPixelFormatForMasks(32, 0x000000FF, 0x0000FF00, 0x00FF0000, 0x00000000), SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        if (renderername == wxString("direct3d")) {
+            texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        } else {
+            texture = SDL_CreateTexture(renderer, SDL_GetPixelFormatForMasks(32, 0x000000FF, 0x0000FF00, 0x00FF0000, 0x00000000), SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        }
 #else
-        texture = SDL_CreateTexture(renderer, SDL_MasksToPixelFormatEnum(32, 0x000000FF, 0x0000FF00, 0x00FF0000, 0x00000000), SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        if (renderername == wxString("direct3d")) {
+            texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        } else {
+            texture = SDL_CreateTexture(renderer, SDL_MasksToPixelFormatEnum(32, 0x000000FF, 0x0000FF00, 0x00FF0000, 0x00000000), SDL_TEXTUREACCESS_STREAMING, (width * scale), (height * scale));
+        }
 #endif
     }
             
@@ -2527,12 +2596,14 @@ void SDLDrawingPanel::DrawArea(wxWindowDC& dc)
 void SDLDrawingPanel::DrawArea()
 {
     uint32_t srcPitch = 0;
-            
+    uint32_t *todraw_argb = NULL;
+    uint16_t *todraw_rgb565 = NULL;
+
     if (!did_init)
         DrawingPanelInit();
             
     if (out_8) {
-        srcPitch = std::ceil(width * scale) + 2;
+        srcPitch = std::ceil(width * scale) + 4;
     } else if (out_16) {
         srcPitch = std::ceil(width * scale * 2) + 4;
     } else if (out_24) {
@@ -2540,17 +2611,44 @@ void SDLDrawingPanel::DrawArea()
     } else {
         srcPitch = std::ceil(width * scale * 4) + 4;
     }
-            
+
     SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0x00);
     SDL_RenderClear(renderer);
-    SDL_UpdateTexture(texture, NULL, todraw + srcPitch, srcPitch);
+
+    if ((renderername == wxString("direct3d")) && (systemColorDepth == 32)) {
+        todraw_argb = (uint32_t *)(todraw + srcPitch);
             
+        for (int i = 0; i < (height * scale); i++) {
+            for (int j = 0; j < (width * scale); j++) {
+                todraw_argb[j + (i * (srcPitch / 4))] = 0xFF000000 | ((todraw_argb[j + (i * (srcPitch / 4))] & 0xFF) << 16) | (todraw_argb[j + (i * (srcPitch / 4))] & 0xFF00) | ((todraw_argb[j + (i * (srcPitch / 4))] & 0xFF0000) >> 16);
+            }
+        }
+
+        if (texture != NULL)
+            SDL_UpdateTexture(texture, NULL, todraw_argb, srcPitch);
+    } else if ((renderername == wxString("direct3d")) && (systemColorDepth == 16)) {
+        todraw_rgb565 = (uint16_t *)(todraw + srcPitch);
+
+        for (int i = 0; i < (height * scale); i++) {
+            for (int j = 0; j < (width * scale); j++) {
+                todraw_rgb565[j + (i * (srcPitch / 2))] = ((todraw_rgb565[j + (i * (srcPitch / 2))] & 0x7FE0) << 1) | (todraw_rgb565[j + (i * (srcPitch / 2))] & 0x1F);
+            }
+        }
+
+        if (texture != NULL)
+            SDL_UpdateTexture(texture, NULL, todraw_rgb565, srcPitch);
+    } else {
+        if (texture != NULL)
+            SDL_UpdateTexture(texture, NULL, todraw + srcPitch, srcPitch);
+    }
+
+    if (texture != NULL)
 #ifdef ENABLE_SDL3
-    SDL_RenderTexture(renderer, texture, NULL, NULL);
+        SDL_RenderTexture(renderer, texture, NULL, NULL);
 #else
-    SDL_RenderCopy(renderer, texture, NULL, NULL);
+        SDL_RenderCopy(renderer, texture, NULL, NULL);
 #endif
-            
+    
     SDL_RenderPresent(renderer);
 }
         
@@ -2560,7 +2658,7 @@ void SDLDrawingPanel::DrawArea(uint8_t** data)
     //   if filtering, this is filter output, retained for redraws
     //   if not filtering, we still retain current image for redraws
     int outbpp = systemColorDepth >> 3;
-    int outrb = out_8 ? 2 : out_24 ? 0 : 4;
+    int outrb = out_8 ? 4 : out_24 ? 0 : 4;
     int outstride = std::ceil(width * outbpp * scale) + outrb;
             
     // FIXME: filters race condition?
@@ -2734,7 +2832,7 @@ void BasicDrawingPanel::DrawArea(wxWindowDC& dc)
     } else if (out_8) {
         // scaled by filters, top/right borders, transform to 24-bit
         im = new wxImage(std::ceil(width * scale), std::ceil(height * scale), false);
-        uint8_t* src = (uint8_t*)todraw + (int)std::ceil((width + 2) * scale); // skip top border
+        uint8_t* src = (uint8_t*)todraw + (int)std::ceil((width * scale) + 4); // skip top border
         uint8_t* dst = im->GetData();
                 
         for (int y = 0; y < std::ceil(height * scale); y++) {
@@ -2751,7 +2849,7 @@ void BasicDrawingPanel::DrawArea(wxWindowDC& dc)
                 }
             }
                     
-            src += 2;
+            src += 4;
         }
     } else if (out_16) {
         // scaled by filters, top/right borders, transform to 24-bit
@@ -2852,7 +2950,7 @@ bool GLDrawingPanel::SetContext()
         // Delete the old context
         if (ctx) {
             delete ctx;
-            ctx = nullptr;
+            ctx = NULL;
         }
                 
         // Create a new context
@@ -3062,9 +3160,6 @@ void GLDrawingPanel::RefreshGL()
         
 void GLDrawingPanel::DrawArea(wxWindowDC& dc)
 {
-    uint8_t* src = NULL;
-    uint8_t* dst = NULL;
-            
     (void)dc; // unused params
     SetContext();
     RefreshGL();
@@ -3073,7 +3168,7 @@ void GLDrawingPanel::DrawArea(wxWindowDC& dc)
         DrawingPanelInit();
             
     if (todraw) {
-        int rowlen = std::ceil(width * scale) + (out_8 ? 0 : out_16 ? 2 : out_24 ? 0 : 1);
+        int rowlen = std::ceil(width * scale) + (out_8 ? 4 : out_16 ? 2 : out_24 ? 0 : 1);
         glPixelStorei(GL_UNPACK_ROW_LENGTH, rowlen);
 #if wxBYTE_ORDER == wxBIG_ENDIAN
                 
@@ -3082,24 +3177,8 @@ void GLDrawingPanel::DrawArea(wxWindowDC& dc)
             glPixelStorei(GL_UNPACK_SWAP_BYTES, GL_TRUE);
                 
 #endif
-        if (out_8) {
-            src = (uint8_t*)todraw + (int)std::ceil((width + 2) * ((systemColorDepth >> 3) * scale)); // skip top border
-            dst = (uint8_t*)todraw;
-                    
-            for (int y = 0; y < std::ceil(height * scale); y++) {
-                for (int x = 0; x < std::ceil(width * scale); x++) {
-                    *dst++ = *src++;
-                }
-                        
-                src += 2;
-            }
-                    
-            glTexImage2D(GL_TEXTURE_2D, 0, int_fmt, (int)std::ceil(width * scale), (int)std::ceil(height * scale),
-                            0, tex_fmt, todraw);
-        } else {
-            glTexImage2D(GL_TEXTURE_2D, 0, int_fmt, (int)std::ceil(width * scale), (int)std::ceil(height * scale),
-                            0, tex_fmt, todraw + (int)std::ceil(rowlen * ((systemColorDepth >> 3) * scale)));
-        }
+        glTexImage2D(GL_TEXTURE_2D, 0, int_fmt, (int)std::ceil(width * scale), (int)std::ceil(height * scale),
+                     0, tex_fmt, todraw + (int)std::ceil(rowlen * ((systemColorDepth >> 3) * scale)));
                 
         glCallList(vlist);
     } else
@@ -3302,7 +3381,7 @@ void GameArea::HideMenuBar()
     if (((systemGetClock() - mouse_active_time) > 3000) && !main_frame->MenusOpened()) {
 #ifdef __WXMSW__
         current_hmenu = static_cast<HMENU>(main_frame->GetMenuBar()->GetHMenu());
-        ::SetMenu(main_frame->GetHandle(), nullptr);
+        ::SetMenu(main_frame->GetHandle(), NULL);
 #else
         main_frame->GetMenuBar()->Hide();
 #endif
@@ -3318,9 +3397,9 @@ void GameArea::ShowMenuBar()
     if (!main_frame || !menu_bar_hidden) return;
             
 #ifdef __WXMSW__
-    if (current_hmenu != nullptr) {
+    if (current_hmenu != NULL) {
         ::SetMenu(main_frame->GetHandle(), current_hmenu);
-        current_hmenu = nullptr;
+        current_hmenu = NULL;
     }
 #else
     main_frame->GetMenuBar()->Show();
@@ -3342,12 +3421,38 @@ void GameArea::OnGBBorderChanged(config::Option* option) {
 }
         
 void GameArea::UpdateLcdFilter() {
-    if (loaded == IMAGE_GBA)
+    int DCCP = 0;
+
+    switch (OPTION(kDispColorCorrectionProfile)) {
+        case config::ColorCorrectionProfile::kSRGB:
+            DCCP = 0;
+            break;
+
+        case config::ColorCorrectionProfile::kDCI:
+            DCCP = 1;
+            break;
+
+        case config::ColorCorrectionProfile::kRec2020:
+            DCCP = 2;
+            break;
+
+        case config::ColorCorrectionProfile::kLast:
+            DCCP = 0;
+            break;
+    }
+
+    if (loaded == IMAGE_GBA) {
+        gbafilter_set_params(DCCP, (((float)OPTION(kGBADarken)) / 100));
         gbafilter_update_colors(OPTION(kGBALCDFilter));
-    else if (loaded == IMAGE_GB)
-        gbafilter_update_colors(OPTION(kGBLCDFilter));
-    else
+    } else if (loaded == IMAGE_GB) {
+        gbcfilter_set_params(DCCP, (((float)OPTION(kGBLighten)) / 100));
+        gbcfilter_update_colors(OPTION(kGBLCDFilter));
+    } else {
+        gbafilter_set_params(DCCP, (((float)OPTION(kGBADarken)) / 100));
+        gbcfilter_set_params(DCCP, (((float)OPTION(kGBLighten)) / 100));
         gbafilter_update_colors(false);
+        gbcfilter_update_colors(false);
+    }
 }
         
 void GameArea::SuspendScreenSaver() {
@@ -3423,7 +3528,7 @@ void MetalDrawingPanel::DrawArea(uint8_t** data)
     //   if filtering, this is filter output, retained for redraws
     //   if not filtering, we still retain current image for redraws
     int outbpp = systemColorDepth >> 3;
-    int outrb = out_8 ? 2 : out_24 ? 0 : 4;
+    int outrb = out_8 ? 4 : out_24 ? 0 : 4;
     int outstride = std::ceil(width * outbpp * scale) + outrb;
             
     // FIXME: filters race condition?

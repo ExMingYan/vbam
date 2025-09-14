@@ -111,6 +111,7 @@
 
 #include "components/draw_text/draw_text.h"
 #include "components/filters_agb/filters_agb.h"
+#include "components/filters_cgb/filters_cgb.h"
 #include "components/user_config/user_config.h"
 #include "core/base/file_util.h"
 #include "core/base/message.h"
@@ -1163,7 +1164,7 @@ void sdlInitVideo()
         switch (systemColorDepth)
         {
             case  8:
-                srcPitch = sizeX * (systemColorDepth >> 3) + 2;
+                srcPitch = sizeX * (systemColorDepth >> 3) + 4;
                 break;
 
             case 16:
@@ -1186,7 +1187,7 @@ void sdlInitVideo()
     } else {
 #ifdef CONFIG_8BIT
         systemColorDepth = 8;
-        srcPitch = sizeX * (systemColorDepth >> 3) + 2;
+        srcPitch = sizeX * (systemColorDepth >> 3) + 4;
 #elif defined(CONFIG_16BIT)
         systemColorDepth = 16;
         srcPitch = sizeX * (systemColorDepth >> 3) + 4;
@@ -2376,6 +2377,7 @@ int main(int argc, char** argv)
     fprintf(stdout, "Color depth: %d\n", systemColorDepth);
 
     gbafilter_update_colors();
+    gbcfilter_update_colors();
 
     if (delta == NULL) {
         delta = (uint8_t*)malloc(delta_size);

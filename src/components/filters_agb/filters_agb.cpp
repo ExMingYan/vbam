@@ -1,4 +1,17 @@
+/*
+ * GBA Color Correction Shader Implementation
+ *
+ * Shader modified by Pokefan531.
+ * Color Mangler
+ * Original Author: hunterk
+ * Original License: Public domain
+ *
+ * This code is adapted from the original shader logic.
+ */
+
 #include "components/filters_agb/filters_agb.h"
+#include <cmath>
+#include <algorithm>
 
 extern int systemColorDepth;
 extern int systemRedShift;
@@ -9,272 +22,332 @@ extern uint8_t  systemColorMap8[0x10000];
 extern uint16_t systemColorMap16[0x10000];
 extern uint32_t systemColorMap32[0x10000];
 
-static const unsigned char curve[32] = { 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0e, 0x10, 0x12,
-    0x14, 0x16, 0x18, 0x1c, 0x20, 0x28, 0x30, 0x38,
-    0x40, 0x48, 0x50, 0x58, 0x60, 0x68, 0x70, 0x80,
-    0x88, 0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0 };
+// --- Global Constants and Variables for GBA Color Correction ---
+// Define the color profile matrix as a static const float 2D array
+// This replicates the column-major order of GLSL mat4 for easier translation.
+// Format: { {col0_row0, col0_row1, col0_row2, col0_row3}, ... }
+static const float GBA_sRGB[4][4] = {
+    {0.905f, 0.10f, 0.1575f, 0.0f}, // Column 0 (R output contributions from R, G, B, A)
+    {0.195f, 0.65f, 0.1425f, 0.0f}, // Column 1 (G output contributions from R, G, B, A)
+    {-0.10f, 0.25f, 0.70f,   0.0f}, // Column 2 (B output contributions from R, G, B, A)
+    {0.0f,   0.0f,  0.0f,    0.91f} // Column 3 (A/Luminance contribution)
+};
 
-//								output           R   G   B
-static const unsigned char influence[3 * 3] = { 16, 4, 4, // red
-    8, 16, 8, // green
-    0, 8, 16 }; // blue
+static const float GBA_DCI[4][4] = {
+    {0.76f,  0.125f,  0.16f, 0.0f},
+    {0.27f,  0.6375f, 0.18f, 0.0f},
+    {-0.03f, 0.2375f, 0.66f, 0.0f},
+    {0.0f,   0.0f,    0.0f,  0.97f}
+};
 
-inline void swap(short& a, short& b)
-{
-    short temp = a;
-    a = b;
-    b = temp;
+static const float GBA_Rec2020[4][4] = {
+    {0.61f,  0.155f, 0.16f,   0.0f},
+    {0.345f, 0.615f, 0.1875f, 0.0f},
+    {0.045f, 0.23f,  0.6525f, 0.0f},
+    {0.0f,   0.0f,   0.0f,    1.0f}
+};
+
+// Screen darkening factor. Default to 0.0f
+static float darken_screen = 0.0f;
+
+// Color mode (0 for sRGB, 1 for DCI, 2 for Rec2020). Default to sRGB (0).
+static int color_mode = 0;
+
+// Pointer to the currently selected color profile matrix.
+static const float (*profile)[4];
+
+// Global constants from the shader for gamma correction values
+static const float target_gamma = 2.2f;
+static const float display_gamma = 2.2f;
+
+
+// --- Function Implementations ---
+
+// Forward declaration of a helper function to set the profile based on color_mode
+static void set_profile_from_mode();
+
+// This constructor-like function runs once when the program starts.
+struct GbafilterInitializer {
+    GbafilterInitializer() {
+        set_profile_from_mode();
+    }
+};
+static GbafilterInitializer __gbafilter_initializer;
+
+
+// Helper function to set the 'profile' pointer based on the 'color_mode' variable.
+static void set_profile_from_mode() {
+    if (color_mode == 0) {
+        profile = GBA_sRGB;
+    }
+    else if (color_mode == 1) {
+        profile = GBA_DCI;
+    }
+    else if (color_mode == 2) {
+        profile = GBA_Rec2020;
+    }
+    else {
+        profile = GBA_sRGB; // Default to sRGB if an invalid mode is set
+    }
+}
+
+
+// Public function to set color mode and darken screen from external calls
+void gbafilter_set_params(int new_color_mode, float new_darken_screen) {
+    color_mode = new_color_mode;
+    darken_screen = fmaxf(0.0f, fminf(1.0f, new_darken_screen)); // Clamp to 0.0-1.0
+
+    // Call the helper to update 'profile' based on the new 'color_mode'
+    set_profile_from_mode();
 }
 
 void gbafilter_update_colors(bool lcd) {
     switch (systemColorDepth) {
-        case 8: {
-            for (int i = 0; i < 0x10000; i++) {
-                systemColorMap8[i] = (uint8_t)((((i & 0x1f) << 3) & 0xE0) |
-                                      ((((i & 0x3e0) >> 5) << 0) & 0x1C) |
-                                      ((((i & 0x7c00) >> 10) >> 3) & 0x3));
-            }
-        } break;
-        case 16: {
-            for (int i = 0; i < 0x10000; i++) {
-                systemColorMap16[i] = ((i & 0x1f) << systemRedShift) |
-                                      (((i & 0x3e0) >> 5) << systemGreenShift) |
-                                      (((i & 0x7c00) >> 10) << systemBlueShift);
-            }
-            if (lcd)
-                gbafilter_pal(systemColorMap16, 0x10000);
-        } break;
-        case 24:
-        case 32: {
-            for (int i = 0; i < 0x10000; i++) {
-                systemColorMap32[i] = ((i & 0x1f) << systemRedShift) |
-                                      (((i & 0x3e0) >> 5) << systemGreenShift) |
-                                      (((i & 0x7c00) >> 10) << systemBlueShift);
-            }
-            if (lcd)
-                gbafilter_pal32(systemColorMap32, 0x10000);
-        } break;
+    case 8: {
+        for (int i = 0; i < 0x10000; i++) {
+            systemColorMap8[i] = (uint8_t)((((i & 0x1f) << 3) & 0xE0) |
+                ((((i & 0x3e0) >> 5) << 0) & 0x1C) |
+                ((((i & 0x7c00) >> 10) >> 3) & 0x3));
+        }
+        if (lcd)
+            gbafilter_pal8(systemColorMap8, 0x10000);
+    } break;
+    case 16: {
+        for (int i = 0x0; i < 0x10000; i++) {
+            systemColorMap16[i] = ((i & 0x1f) << systemRedShift) |
+                (((i & 0x3e0) >> 5) << systemGreenShift) |
+                (((i & 0x7c00) >> 10) << systemBlueShift);
+        }
+        if (lcd)
+            gbafilter_pal(systemColorMap16, 0x10000);
+    } break;
+    case 24:
+    case 32: {
+        for (int i = 0; i < 0x10000; i++) {
+            systemColorMap32[i] = ((i & 0x1f) << systemRedShift) |
+                (((i & 0x3e0) >> 5) << systemGreenShift) |
+                (((i & 0x7c00) >> 10) << systemBlueShift);
+        }
+        if (lcd)
+            gbafilter_pal32(systemColorMap32, 0x10000);
+    } break;
+    }
+}
+
+void gbafilter_pal8(uint8_t* buf, int count)
+{
+    // Pre-calculate constants for efficiency within function scope
+    const float target_gamma_exponent = target_gamma + darken_screen;
+    const float display_gamma_reciprocal = 1.0f / display_gamma;
+    const float luminance_factor = profile[3][3]; // profile[3].w from GLSL
+
+    while (count--) {
+        uint8_t pix = *buf;
+
+        uint8_t original_r_val_3bit = (uint8_t)((pix & 0xE0) >> 5);
+        uint8_t original_g_val_3bit = (uint8_t)((pix & 0x1C) >> 2);
+        uint8_t original_b_val_2bit = (uint8_t)(pix & 0x3);
+
+        // Normalize to 0.0-1.0 for calculations
+        float r = (float)original_r_val_3bit / 7.0f;
+        float g = (float)original_g_val_3bit / 7.0f;
+        float b = (float)original_b_val_2bit / 3.0f;
+
+        // 1. Apply initial gamma (including darken_screen as exponent) to convert to linear space.
+        // This step will affect non-"white" values.
+        r = powf(r, target_gamma_exponent);
+        g = powf(g, target_gamma_exponent);
+        b = powf(b, target_gamma_exponent);
+
+        // 2. Apply luminance factor and clamp.
+        r = fmaxf(0.0f, fminf(1.0f, r * luminance_factor));
+        g = fmaxf(0.0f, fminf(1.0f, g * luminance_factor));
+        b = fmaxf(0.0f, fminf(1.0f, b * luminance_factor));
+
+        // 3. Apply color profile matrix (using profile[column][row] access)
+        float transformed_r = profile[0][0] * r + profile[1][0] * g + profile[2][0] * b;
+        float transformed_g = profile[0][1] * r + profile[1][1] * g + profile[2][1] * b;
+        float transformed_b = profile[0][2] * r + profile[1][2] * g + profile[2][2] * b;
+
+        // 4. Apply display gamma to convert back for display.
+        transformed_r = copysignf(powf(fabsf(transformed_r), display_gamma_reciprocal), transformed_r);
+        transformed_g = copysignf(powf(fabsf(transformed_g), display_gamma_reciprocal), transformed_g);
+        transformed_b = copysignf(powf(fabsf(transformed_b), display_gamma_reciprocal), transformed_b);
+
+        // Final clamp: ensure values are within 0.0-1.0 range
+        transformed_r = fmaxf(0.0f, fminf(1.0f, transformed_r));
+        transformed_g = fmaxf(0.0f, fminf(1.0f, transformed_g));
+        transformed_b = fmaxf(0.0f, fminf(1.0f, transformed_b));
+
+        // Convert back to 3-bit or 2-bit (0-7 or 0-3) integer and combine into uint8_t
+        // Apply 5-bit to 5-bit conversion, as this palette is for 16-bit output.
+        uint8_t final_red = (uint8_t)(transformed_r * 7.0f + 0.5f);
+        uint8_t final_green = (uint8_t)(transformed_g * 7.0f + 0.5f);
+        uint8_t final_blue = (uint8_t)(transformed_b * 3.0f + 0.5f);
+
+        // Ensure values are strictly within 0-7 or 0-3 range after rounding
+        if (final_red > 7) final_red = 7;
+        if (final_green > 7) final_green = 7;
+        if (final_blue > 3) final_blue = 3;
+
+        *buf++ = ((final_red & 0x7) << 5) |
+            ((final_green & 0x7) << 2) |
+            (final_blue & 0x3);
     }
 }
 
 void gbafilter_pal(uint16_t* buf, int count)
 {
-    short temp[3 * 3], s;
-    uint16_t pix;
-    uint8_t red, green, blue;
+    // Pre-calculate constants for efficiency within function scope
+    const float target_gamma_exponent = target_gamma + darken_screen;
+    const float display_gamma_reciprocal = 1.0f / display_gamma;
+    const float luminance_factor = profile[3][3]; // profile[3].w from GLSL
 
     while (count--) {
-        pix = *buf;
+        uint16_t pix = *buf;
 
-        s = curve[(pix >> systemGreenShift) & 0x1f];
-        temp[3] = s * influence[3];
-        temp[4] = s * influence[4];
-        temp[5] = s * influence[5];
+        uint8_t original_r_val_5bit = (uint8_t)((pix >> systemRedShift) & 0x1f);
+        uint8_t original_g_val_5bit = (uint8_t)((pix >> systemGreenShift) & 0x1f);
+        uint8_t original_b_val_5bit = (uint8_t)((pix >> systemBlueShift) & 0x1f);
 
-        s = curve[(pix >> systemRedShift) & 0x1f];
-        temp[0] = s * influence[0];
-        temp[1] = s * influence[1];
-        temp[2] = s * influence[2];
+        // Normalize to 0.0-1.0 for calculations
+        float r = (float)original_r_val_5bit / 31.0f;
+        float g = (float)original_g_val_5bit / 31.0f;
+        float b = (float)original_b_val_5bit / 31.0f;
 
-        s = curve[(pix >> systemBlueShift) & 0x1f];
-        temp[6] = s * influence[6];
-        temp[7] = s * influence[7];
-        temp[8] = s * influence[8];
+        // 1. Apply initial gamma (including darken_screen as exponent) to convert to linear space.
+        // This step will affect non-"white" values.
+        r = powf(r, target_gamma_exponent);
+        g = powf(g, target_gamma_exponent);
+        b = powf(b, target_gamma_exponent);
 
-        if (temp[0] < temp[3])
-            swap(temp[0], temp[3]);
-        if (temp[0] < temp[6])
-            swap(temp[0], temp[6]);
-        if (temp[3] < temp[6])
-            swap(temp[3], temp[6]);
-        temp[3] <<= 1;
-        temp[0] <<= 2;
-        temp[0] += temp[3] + temp[6];
+        // 2. Apply luminance factor and clamp.
+        r = fmaxf(0.0f, fminf(1.0f, r * luminance_factor));
+        g = fmaxf(0.0f, fminf(1.0f, g * luminance_factor));
+        b = fmaxf(0.0f, fminf(1.0f, b * luminance_factor));
 
-        red = ((int(temp[0]) * 160) >> 17) + 4;
-        if (red > 31)
-            red = 31;
+        // 3. Apply color profile matrix (using profile[column][row] access)
+        float transformed_r = profile[0][0] * r + profile[1][0] * g + profile[2][0] * b;
+        float transformed_g = profile[0][1] * r + profile[1][1] * g + profile[2][1] * b;
+        float transformed_b = profile[0][2] * r + profile[1][2] * g + profile[2][2] * b;
 
-        if (temp[2] < temp[5])
-            swap(temp[2], temp[5]);
-        if (temp[2] < temp[8])
-            swap(temp[2], temp[8]);
-        if (temp[5] < temp[8])
-            swap(temp[5], temp[8]);
-        temp[5] <<= 1;
-        temp[2] <<= 2;
-        temp[2] += temp[5] + temp[8];
+        // 4. Apply display gamma to convert back for display.
+        transformed_r = copysignf(powf(fabsf(transformed_r), display_gamma_reciprocal), transformed_r);
+        transformed_g = copysignf(powf(fabsf(transformed_g), display_gamma_reciprocal), transformed_g);
+        transformed_b = copysignf(powf(fabsf(transformed_b), display_gamma_reciprocal), transformed_b);
 
-        blue = ((int(temp[2]) * 160) >> 17) + 4;
-        if (blue > 31)
-            blue = 31;
+        // Final clamp: ensure values are within 0.0-1.0 range
+        transformed_r = fmaxf(0.0f, fminf(1.0f, transformed_r));
+        transformed_g = fmaxf(0.0f, fminf(1.0f, transformed_g));
+        transformed_b = fmaxf(0.0f, fminf(1.0f, transformed_b));
 
-        if (temp[1] < temp[4])
-            swap(temp[1], temp[4]);
-        if (temp[1] < temp[7])
-            swap(temp[1], temp[7]);
-        if (temp[4] < temp[7])
-            swap(temp[4], temp[7]);
-        temp[4] <<= 1;
-        temp[1] <<= 2;
-        temp[1] += temp[4] + temp[7];
+        // Convert back to 5-bit (0-31) integer and combine into uint16_t
+        // Apply 5-bit to 5-bit conversion, as this palette is for 16-bit output.
+        uint8_t final_red = (uint8_t)(transformed_r * 31.0f + 0.5f);
+        uint8_t final_green = (uint8_t)(transformed_g * 31.0f + 0.5f);
+        uint8_t final_blue = (uint8_t)(transformed_b * 31.0f + 0.5f);
 
-        green = ((int(temp[1]) * 160) >> 17) + 4;
-        if (green > 31)
-            green = 31;
+        // Ensure values are strictly within 0-31 range after rounding
+        if (final_red > 31) final_red = 31;
+        if (final_green > 31) final_green = 31;
+        if (final_blue > 31) final_blue = 31;
 
-        pix = red << systemRedShift;
-        pix += green << systemGreenShift;
-        pix += blue << systemBlueShift;
-
-        *buf++ = pix;
+        *buf++ = (final_red << systemRedShift) |
+            (final_green << systemGreenShift) |
+            (final_blue << systemBlueShift);
     }
 }
 
 void gbafilter_pal32(uint32_t* buf, int count)
 {
-    short temp[3 * 3], s;
-    unsigned pix;
-    uint8_t red, green, blue;
+    // Pre-calculate constants for efficiency within function scope
+    const float target_gamma_exponent = target_gamma + darken_screen;
+    const float display_gamma_reciprocal = 1.0f / display_gamma;
+    const float luminance_factor = profile[3][3]; // profile[3].w from GLSL
 
     while (count--) {
-        pix = *buf;
+        uint32_t pix = *buf;
 
-        s = curve[(pix >> systemGreenShift) & 0x1f];
-        temp[3] = s * influence[3];
-        temp[4] = s * influence[4];
-        temp[5] = s * influence[5];
+        // Extract original 5-bit R, G, B values from the shifted positions in the 32-bit pixel.
+        // These shifts pull out the 5-bit value from its shifted position (e.g., bits 3-7 for Red).
+        uint8_t original_r_val_5bit = (uint8_t)((pix >> systemRedShift) & 0x1f);
+        uint8_t original_g_val_5bit = (uint8_t)((pix >> systemGreenShift) & 0x1f);
+        uint8_t original_b_val_5bit = (uint8_t)((pix >> systemBlueShift) & 0x1f);
 
-        s = curve[(pix >> systemRedShift) & 0x1f];
-        temp[0] = s * influence[0];
-        temp[1] = s * influence[1];
-        temp[2] = s * influence[2];
 
-        s = curve[(pix >> systemBlueShift) & 0x1f];
-        temp[6] = s * influence[6];
-        temp[7] = s * influence[7];
-        temp[8] = s * influence[8];
+        // Normalize to 0.0-1.0 for calculations
+        float r = (float)original_r_val_5bit / 31.0f;
+        float g = (float)original_g_val_5bit / 31.0f;
+        float b = (float)original_b_val_5bit / 31.0f;
 
-        if (temp[0] < temp[3])
-            swap(temp[0], temp[3]);
-        if (temp[0] < temp[6])
-            swap(temp[0], temp[6]);
-        if (temp[3] < temp[6])
-            swap(temp[3], temp[6]);
-        temp[3] <<= 1;
-        temp[0] <<= 2;
-        temp[0] += temp[3] + temp[6];
+        // 1. Apply initial gamma (including darken_screen as exponent) to convert to linear space.
+        r = powf(r, target_gamma_exponent);
+        g = powf(g, target_gamma_exponent);
+        b = powf(b, target_gamma_exponent);
 
-        //red = ((int(temp[0]) * 160) >> 17) + 4;
-        red = ((int(temp[0]) * 160) >> 14) + 32;
+        // 2. Apply luminance factor and clamp.
+        r = fmaxf(0.0f, fminf(1.0f, r * luminance_factor));
+        g = fmaxf(0.0f, fminf(1.0f, g * luminance_factor));
+        b = fmaxf(0.0f, fminf(1.0f, b * luminance_factor));
 
-        if (temp[2] < temp[5])
-            swap(temp[2], temp[5]);
-        if (temp[2] < temp[8])
-            swap(temp[2], temp[8]);
-        if (temp[5] < temp[8])
-            swap(temp[5], temp[8]);
-        temp[5] <<= 1;
-        temp[2] <<= 2;
-        temp[2] += temp[5] + temp[8];
+        // 3. Apply color profile matrix
+        float transformed_r = profile[0][0] * r + profile[1][0] * g + profile[2][0] * b;
+        float transformed_g = profile[0][1] * r + profile[1][1] * g + profile[2][1] * b;
+        float transformed_b = profile[0][2] * r + profile[1][2] * g + profile[2][2] * b;
 
-        //blue = ((int(temp[2]) * 160) >> 17) + 4;
-        blue = ((int(temp[2]) * 160) >> 14) + 32;
+        // 4. Apply display gamma.
+        transformed_r = copysignf(powf(fabsf(transformed_r), display_gamma_reciprocal), transformed_r);
+        transformed_g = copysignf(powf(fabsf(transformed_g), display_gamma_reciprocal), transformed_g);
+        transformed_b = copysignf(powf(fabsf(transformed_b), display_gamma_reciprocal), transformed_b);
 
-        if (temp[1] < temp[4])
-            swap(temp[1], temp[4]);
-        if (temp[1] < temp[7])
-            swap(temp[1], temp[7]);
-        if (temp[4] < temp[7])
-            swap(temp[4], temp[7]);
-        temp[4] <<= 1;
-        temp[1] <<= 2;
-        temp[1] += temp[4] + temp[7];
+        // Final clamp: ensure values are within 0.0-1.0 range
+        transformed_r = fmaxf(0.0f, fminf(1.0f, transformed_r));
+        transformed_g = fmaxf(0.0f, fminf(1.0f, transformed_g));
+        transformed_b = fmaxf(0.0f, fminf(1.0f, transformed_b));
 
-        //green = ((int(temp[1]) * 160) >> 17) + 4;
-        green = ((int(temp[1]) * 160) >> 14) + 32;
 
-        //pix  = red << redshift;
-        //pix += green << greenshift;
-        //pix += blue << blueshift;
+        // Convert the floating-point values to 8-bit integer components (0-255).
+        uint8_t final_red_8bit = (uint8_t)(transformed_r * 255.0f + 0.5f);
+        uint8_t final_green_8bit = (uint8_t)(transformed_g * 255.0f + 0.5f);
+        uint8_t final_blue_8bit = (uint8_t)(transformed_b * 255.0f + 0.5f);
 
-        pix = red << (systemRedShift - 3);
-        pix += green << (systemGreenShift - 3);
-        pix += blue << (systemBlueShift - 3);
+        // Ensure values are strictly within 0-255 range after rounding
+        if (final_red_8bit > 255) final_red_8bit = 255;
+        if (final_green_8bit > 255) final_green_8bit = 255;
+        if (final_blue_8bit > 255) final_blue_8bit = 255;
 
-        *buf++ = pix;
-    }
-}
+        // --- NEW PACKING LOGIC ---
+        // This is the critical change to correctly map 8-bit color to the 5-bit shifted format,
+        // while allowing FFFFFF.
+        // It uses the top 5 bits of the 8-bit value for the GBA's 5-bit component position,
+        // and the bottom 3 bits to fill the lower, normally zeroed, positions.
 
-// for palette mode to work with the three spoony filters in 32bpp depth
+        uint32_t final_pix = 0;
 
-void gbafilter_pad(uint8_t* buf, int count)
-{
-    union {
-        struct
-        {
-            uint8_t r;
-            uint8_t g;
-            uint8_t b;
-            uint8_t a;
-        } part;
-        unsigned whole;
-    } mask;
+        // Red component
+        // 5 most significant bits (MSBs) for the 'systemRedShift' position
+        final_pix |= ((final_red_8bit >> 3) & 0x1f) << systemRedShift;
+        // 3 least significant bits (LSBs) for the 'base' position (systemRedShift - 3)
+        final_pix |= (final_red_8bit & 0x07) << (systemRedShift - 3);
 
-    mask.whole = 0x1f << systemRedShift;
-    mask.whole += 0x1f << systemGreenShift;
-    mask.whole += 0x1f << systemBlueShift;
 
-    switch (systemColorDepth) {
-    case 24:
-        while (count--) {
-            *buf++ &= mask.part.r;
-            *buf++ &= mask.part.g;
-            *buf++ &= mask.part.b;
+        // Green component
+        // 5 MSBs for the 'systemGreenShift' position
+        final_pix |= ((final_green_8bit >> 3) & 0x1f) << systemGreenShift;
+        // 3 LSBs for the 'base' position (systemGreenShift - 3)
+        final_pix |= (final_green_8bit & 0x07) << (systemGreenShift - 3);
+
+        // Blue component
+        // 5 MSBs for the 'systemBlueShift' position
+        final_pix |= ((final_blue_8bit >> 3) & 0x1f) << systemBlueShift;
+        // 3 LSBs for the 'base' position (systemBlueShift - 3)
+        final_pix |= (final_blue_8bit & 0x07) << (systemBlueShift - 3);
+
+        // Preserve existing alpha if present (assuming it's at bits 24-31 for 32-bit depth)
+        if (systemColorDepth == 32) {
+            final_pix |= (pix & (0xFF << 24));
         }
-        break;
-    case 32:
-        while (count--) {
-            *((uint32_t*)buf) &= mask.whole;
-            buf += 4;
-        }
-    }
-}
 
-/*
-void UpdateSystemColorMaps(int lcd)
-{
-  switch(systemColorDepth) {
-  case 8:
-   {
-     for(int i = 0; i < 0x10000; i++) {
-       systemColorMap8[i] = (((i & 0x1f) << systemRedShift) & 0xE0) |
-         ((((i & 0x3e0) >> 5) << systemGreenShift) & 0x1C) |
-         ((((i & 0x7c00) >> 10) << systemBlueShift) & 0x3);
-      }
+        *buf++ = final_pix;
     }
-    break;
-  case 16:
-    {
-      for(int i = 0; i < 0x10000; i++) {
-        systemColorMap16[i] = ((i & 0x1f) << systemRedShift) |
-          (((i & 0x3e0) >> 5) << systemGreenShift) |
-          (((i & 0x7c00) >> 10) << systemBlueShift);
-      }
-	  if (lcd == 1) gbafilter_pal(systemColorMap16, 0x10000);
-    }
-    break;
-  case 24:
-  case 32:
-    {
-      for(int i = 0; i < 0x10000; i++) {
-        systemColorMap32[i] = ((i & 0x1f) << systemRedShift) |
-          (((i & 0x3e0) >> 5) << systemGreenShift) |
-          (((i & 0x7c00) >> 10) << systemBlueShift);
-      }
-	  if (lcd == 1) gbafilter_pal32(systemColorMap32, 0x10000);
-    }
-    break;
-  }
 }
-*/

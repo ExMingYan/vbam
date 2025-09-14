@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.19)
 cmake_policy(VERSION 3.19...3.28.3)
 
+# Use new link library de-duplication behavior.
+if(POLICY CMP0156)
+    cmake_policy(SET CMP0156 NEW)
+endif()
+if(POLICY CMP0179)
+    cmake_policy(SET CMP0179 NEW)
+endif()
+#if(POLICY CMP0181)
+#    cmake_policy(SET CMP0181 NEW)
+#endif()
+
 set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 
 if(WIN32)
@@ -22,11 +33,16 @@ if(TAG_RELEASE)
     include(MakeReleaseCommitAndTag)
 endif()
 
-set(VCPKG_DEPS pkgconf zlib pthreads sdl3 gettext wxwidgets)
+option(VCPKG_BINARY_PACKAGES "Use vcpkg binary packages" TRUE)
+
+set(VCPKG_DEPS zlib bzip2 "liblzma[tools]" pthreads gettext-libintl wxwidgets nanosvg)
 
 set(VCPKG_DEPS_OPTIONAL
-    ffmpeg ENABLE_FFMPEG
-    faudio ENABLE_FAUDIO
+    "sdl3[vulkan]"      ENABLE_SDL3
+    "sdl2[samplerate]"  ENABLE_SDL2
+    openal-soft         ENABLE_OPENAL
+    "ffmpeg[x264,x265]" ENABLE_FFMPEG
+    faudio              ENABLE_FAUDIO
 )
 
 include(Set-Toolchain-vcpkg)
@@ -78,7 +94,16 @@ if(APPLE)
     include(CheckLanguage)
     include(MetalShaderSupport)
 
-    check_language(Metal)
+    execute_process(
+        COMMAND xcrun -f metal
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        OUTPUT_VARIABLE CMAKE_Metal_COMPILER
+    )
+
+    if(NOT CMAKE_Metal_COMPILER)
+        check_language(Metal)
+    endif()
+
     if(CMAKE_Metal_COMPILER)
         enable_language(Metal)
     endif()

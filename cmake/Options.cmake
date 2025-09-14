@@ -40,14 +40,28 @@ if(VBAM_STATIC)
     endif()
 endif()
 
-find_package(SDL3 QUIET)
+if(CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg")
+   set(PKG_CONFIG_EXECUTABLE "$ENV{VCPKG_ROOT}/installed/x64-windows/tools/pkgconf/pkgconf.exe")
+endif()
+
+find_package(PkgConfig)
+
+if(UNIX AND NOT APPLE)
+    pkg_check_modules(SDL3 sdl3 QUIET)
+else()
+    find_package(SDL3 QUIET)
+endif()
 
 option(ENABLE_SDL3 "Use SDL3" "${SDL3_FOUND}")
 
-if(ENABLE_SDL3)
-    find_package(SDL3 CONFIG REQUIRED)
-else()
-    find_package(SDL2 CONFIG REQUIRED)
+if(NOT TRANSLATIONS_ONLY)
+    if(ENABLE_SDL3)
+        if(NOT UNIX)
+            find_package(SDL3 REQUIRED)
+        endif()
+    else()
+        find_package(SDL2 REQUIRED)
+    endif()
 endif()
 
 option(ENABLE_GENERIC_FILE_DIALOGS "Use generic file dialogs" OFF)
@@ -56,6 +70,8 @@ option(ENABLE_SDL "Build the SDL port" ${ENABLE_SDL_DEFAULT})
 option(ENABLE_WX "Build the wxWidgets port" ${BUILD_DEFAULT})
 option(ENABLE_DEBUGGER "Enable the debugger" ON)
 option(ENABLE_ASAN "Enable -fsanitize=address by default. Requires debug build with GCC/Clang" OFF)
+option(ENABLE_BZ2 "Enable BZ2 archive support" ON)
+option(ENABLE_LZMA "Enable LZMA archive support" ON)
 
 if(ENABLE_SDL3)
    set(CMAKE_C_FLAGS "-DENABLE_SDL3 ${CMAKE_C_FLAGS}")
@@ -89,8 +105,6 @@ if(APPLE AND NOT DISABLE_MACOS_PACKAGE_MANAGERS)
     include(MacPackageManagers)
 endif()
 
-find_package(PkgConfig)
-
 # Link / SFML
 if(NOT TRANSLATIONS_ONLY)
     set(ENABLE_LINK_DEFAULT ON)
@@ -99,27 +113,28 @@ option(ENABLE_LINK "Enable GBA linking functionality" ${ENABLE_LINK_DEFAULT})
 
 # FFMpeg
 set(FFMPEG_DEFAULT OFF)
-set(FFMPEG_COMPONENTS         AVCODEC            AVFORMAT            SWSCALE          AVUTIL            SWRESAMPLE)
-set(FFMPEG_COMPONENT_VERSIONS AVCODEC>=58.18.100 AVFORMAT>=58.12.100 SWSCALE>=5.1.100 AVUTIL>=56.14.100 SWRESAMPLE>=3.1.100)
+set(FFMPEG_COMPONENTS         AVFORMAT            AVCODEC            SWSCALE          AVUTIL            SWRESAMPLE          X264    X265)
+set(FFMPEG_COMPONENT_VERSIONS AVFORMAT>=58.12.100 AVCODEC>=58.18.100 SWSCALE>=5.1.100 AVUTIL>=56.14.100 SWRESAMPLE>=3.1.100 X264>=0 X265>=0)
 
-if(NOT TRANSLATIONS_ONLY AND (NOT DEFINED ENABLE_FFMPEG OR ENABLE_FFMPEG) AND (NOT (X86 AND MINGW)))
+if(NOT TRANSLATIONS_ONLY AND (NOT DEFINED ENABLE_FFMPEG OR ENABLE_FFMPEG))
     set(FFMPEG_DEFAULT ON)
 
     find_package(FFmpeg COMPONENTS ${FFMPEG_COMPONENTS})
+
     # check versions, but only if pkgconfig is available
-    if(FFMPEG_FOUND AND PKG_CONFIG_FOUND AND NOT CMAKE_TOOLCHAIN_FILE MATCHES vcpkg)
+    if(FFmpeg_FOUND AND PKG_CONFIG_FOUND AND NOT CMAKE_TOOLCHAIN_FILE MATCHES vcpkg)
         foreach(component ${FFMPEG_COMPONENT_VERSIONS})
             string(REPLACE ">=" ";" parts ${component})
             list(GET parts 0 name)
             list(GET parts 1 version)
 
             if((NOT DEFINED ${name}_VERSION) OR ${name}_VERSION VERSION_LESS ${version})
-                set(FFMPEG_FOUND OFF)
+                set(FFmpeg_FOUND OFF)
             endif()
         endforeach()
     endif()
 
-    if(NOT FFMPEG_FOUND)
+    if(NOT FFmpeg_FOUND)
         set(FFMPEG_DEFAULT OFF)
     endif()
 endif()
@@ -191,3 +206,13 @@ if(TRANSLATIONS_ONLY AND (ENABLE_SDL OR ENABLE_WX))
 endif()
 
 option(GPG_SIGNATURES "Create GPG signatures for release files" OFF)
+
+if(APPLE)
+   set(wx_mac_patched_default OFF)
+
+   if(UPSTREAM_RELEASE)
+      set(wx_mac_patched_default ON)
+   endif()
+
+   option(WX_MAC_PATCHED "A build of wxWidgets that is patched for the alert sound bug is being used" ${wx_mac_patched_default})
+endif()

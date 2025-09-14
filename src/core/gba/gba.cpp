@@ -165,6 +165,8 @@ uint8_t memoryWait32[16] = { 0, 0, 5, 0, 0, 1, 1, 0, 7, 7, 9, 9, 13, 13, 4, 0 };
 uint8_t memoryWaitSeq[16] = { 0, 0, 2, 0, 0, 0, 0, 0, 2, 2, 4, 4, 8, 8, 4, 0 };
 uint8_t memoryWaitSeq32[16] = { 0, 0, 5, 0, 0, 1, 1, 0, 5, 5, 9, 9, 17, 17, 4, 0 };
 
+GBAMatrix_t stateMatrix;
+
 // The videoMemoryWait constants are used to add some waitstates
 // if the opcode access video memory data outside of vblank/hblank
 // It seems to happen on only one ticks for each pixel.
@@ -474,6 +476,40 @@ variable_desc saveGameStruct[] = {
 };
 
 static int romSize = SIZE_ROM;
+static int pristineRomSize = 0;
+
+#define MAPPING_MASK (GBA_MATRIX_MAPPINGS_MAX - 1)
+
+static void _remapMatrix(GBAMatrix_t *matrix)
+{
+    if (matrix == NULL) {
+        log("Matrix is NULL");
+        return;
+    }
+
+    if (matrix->vaddr & 0xFFFFE1FF) {
+        log("Invalid Matrix mapping: %08X", matrix->vaddr);
+        return;
+    }
+    if (matrix->size & 0xFFFFE1FF) {
+        log("Invalid Matrix size: %08X", matrix->size);
+        return;
+    }
+    if ((matrix->vaddr + matrix->size - 1) & 0xFFFFE000) {
+        log("Invalid Matrix mapping end: %08X", matrix->vaddr + matrix->size);
+        return;
+    }
+    int start = matrix->vaddr >> 9;
+    int size = (matrix->size >> 9) & MAPPING_MASK;
+    int i;
+    for (i = 0; i < size; ++i) {
+        matrix->mappings[(start + i) & MAPPING_MASK] = matrix->paddr + (i << 9);
+    }
+
+    if ((g_rom2 != NULL) && (g_rom != NULL)) {
+        memcpy(&g_rom[matrix->vaddr], &g_rom2[matrix->paddr], matrix->size);
+    }
+}
 
 void gbaUpdateRomSize(int size)
 {
@@ -485,7 +521,7 @@ void gbaUpdateRomSize(int size)
         g_rom = tmp;
 
         uint16_t* temp = (uint16_t*)(g_rom + ((romSize + 1) & ~1));
-        for (int i = (romSize + 1) & ~1; i < SIZE_ROM; i += 2) {
+        for (int i = (romSize + 1) & ~1; i < romSize; i += 2) {
             WRITE16LE(temp, (i >> 1) & 0xFFFF);
             temp++;
         }
@@ -638,6 +674,15 @@ unsigned int CPUWriteState(uint8_t* data)
     soundSaveGame(data);
     rtcSaveGame(data);
 
+    if (pristineRomSize > SIZE_ROM) {
+        uint8_t ident = 0;
+        memcpy(&ident, &g_rom[0xAC], 1);
+
+        if (ident == 'M') {
+            utilWriteMem(data, &GBAMatrix, sizeof(GBAMatrix));
+        }
+    }
+
     return (ptrdiff_t)data - (ptrdiff_t)orig;
 }
 
@@ -683,6 +728,15 @@ bool CPUReadState(const uint8_t* data)
     soundReadGame(data);
     rtcReadGame(data);
 
+    if (pristineRomSize > SIZE_ROM) {
+        uint8_t ident = 0;
+        memcpy(&ident, &g_rom[0xAC], 1);
+
+        if (ident == 'M') {
+            utilReadMem(&stateMatrix, data, sizeof(stateMatrix));
+        }
+    }
+
     //// Copypasta stuff ...
     // set pointers!
     coreOptions.layerEnable = coreOptions.layerSettings & DISPCNT;
@@ -709,6 +763,27 @@ bool CPUReadState(const uint8_t* data)
     }
 
     CPUUpdateRegister(0x204, CPUReadHalfWordQuick(0x4000204));
+
+    if (pristineRomSize > SIZE_ROM) {
+        uint8_t ident = 0;
+        memcpy(&ident, &g_rom[0xAC], 1);
+
+        if (ident == 'M') {
+            GBAMatrix.size = 0x200;
+
+            for (int i = 0; i < 16; ++i) {
+                GBAMatrix.mappings[i] = stateMatrix.mappings[i];
+                GBAMatrix.paddr = GBAMatrix.mappings[i];
+                GBAMatrix.vaddr = i << 9;
+                _remapMatrix(&GBAMatrix);
+            }
+
+            GBAMatrix.cmd = stateMatrix.cmd;
+            GBAMatrix.paddr = stateMatrix.paddr;
+            GBAMatrix.vaddr = stateMatrix.vaddr;
+            GBAMatrix.size = stateMatrix.size;
+        }
+    }
 
     return true;
 }
@@ -748,6 +823,15 @@ static bool CPUWriteState(gzFile gzFile)
 
     // version 1.5
     rtcSaveGame(gzFile);
+
+    if (pristineRomSize > SIZE_ROM) {
+        uint8_t ident = 0;
+        memcpy(&ident, &g_rom[0xAC], 1);
+
+        if (ident == 'M') {
+            utilGzWrite(gzFile, &GBAMatrix, sizeof(GBAMatrix));
+        }
+    }
 
     return true;
 }
@@ -880,6 +964,15 @@ static bool CPUReadState(gzFile gzFile)
         rtcReadGame(gzFile);
     }
 
+    if (pristineRomSize > SIZE_ROM) {
+        uint8_t ident = 0;
+        memcpy(&ident, &g_rom[0xAC], 1);
+
+        if (ident == 'M') {
+            utilGzRead(gzFile, &stateMatrix, sizeof(stateMatrix));
+        }
+    }
+
     if (version <= SAVE_GAME_VERSION_7) {
         uint32_t temp;
 #define SWAP(a, b, c)      \
@@ -929,6 +1022,27 @@ static bool CPUReadState(gzFile gzFile)
     }
 
     CPUUpdateRegister(0x204, CPUReadHalfWordQuick(0x4000204));
+
+    if (pristineRomSize > SIZE_ROM) {
+        uint8_t ident = 0;
+        memcpy(&ident, &g_rom[0xAC], 1);
+
+        if (ident == 'M') {
+            GBAMatrix.size = 0x200;
+
+            for (int i = 0; i < 16; ++i) {
+                GBAMatrix.mappings[i] = stateMatrix.mappings[i];
+                GBAMatrix.paddr = GBAMatrix.mappings[i];
+                GBAMatrix.vaddr = i << 9;
+                _remapMatrix(&GBAMatrix);
+            }
+
+            GBAMatrix.cmd = stateMatrix.cmd;
+            GBAMatrix.paddr = stateMatrix.paddr;
+            GBAMatrix.vaddr = stateMatrix.vaddr;
+            GBAMatrix.size = stateMatrix.size;
+        }
+    }
 
     return true;
 }
@@ -1389,6 +1503,11 @@ void CPUCleanUp()
         g_rom = NULL;
     }
 
+    if (g_rom2 != NULL) {
+        free(g_rom2);
+        g_rom2 = NULL;
+    }
+
     if (g_vram != NULL) {
         free(g_vram);
         g_vram = NULL;
@@ -1479,16 +1598,108 @@ void SetMapMasks()
 #endif
 }
 
+void GBAMatrixReset(GBAMatrix_t *matrix) {
+    if (matrix == NULL) {
+        log("Matrix is NULL");
+        return;
+    }
+
+    memset(matrix->mappings, 0, sizeof(matrix->mappings));
+    matrix->size = 0x1000;
+
+    matrix->paddr = 0;
+    matrix->vaddr = 0;
+    _remapMatrix(matrix);
+    matrix->paddr = 0x200;
+    matrix->vaddr = 0x1000;
+    _remapMatrix(matrix);
+}
+
+void GBAMatrixWrite(GBAMatrix_t *matrix, uint32_t address, uint32_t value)
+{
+    if (matrix == NULL) {
+        log("Matrix is NULL");
+        return;
+    }
+
+    switch (address) {
+    case 0x0:
+        matrix->cmd = value;
+        switch (value) {
+        case 0x01:
+        case 0x11:
+            _remapMatrix(matrix);
+            break;
+        default:
+            log("Unknown Matrix command: %08X", value);
+            break;
+        }
+        return;
+    case 0x4:
+        matrix->paddr = value & 0x03FFFFFF;
+        return;
+    case 0x8:
+        matrix->vaddr = value & 0x007FFFFF;
+        return;
+    case 0xC:
+        if (value == 0) {
+            log("Rejecting Matrix write for size 0");
+            return;
+        }
+        matrix->size = value << 9;
+        return;
+    }
+    log("Unknown Matrix write: %08X:%04X", address, value);
+}
+
+void GBAMatrixWrite16(GBAMatrix_t *matrix, uint32_t address, uint16_t value)
+{
+    if (matrix == NULL) {
+        log("Matrix is NULL");
+        return;
+    }
+
+    switch (address) {
+    case 0x0:
+        GBAMatrixWrite(matrix, address, value | (matrix->cmd & 0xFFFF0000));
+        break;
+    case 0x4:
+        GBAMatrixWrite(matrix, address, value | (matrix->paddr & 0xFFFF0000));
+        break;
+    case 0x8:
+        GBAMatrixWrite(matrix, address, value | (matrix->vaddr & 0xFFFF0000));
+        break;
+    case 0xC:
+        GBAMatrixWrite(matrix, address, value | (matrix->size & 0xFFFF0000));
+        break;
+    }
+}
+
+static size_t get_gba_rom_size(const char* szFile)
+{
+    size_t size = 0;
+    FILE *f = fopen(szFile, "rb");
+
+    if (f == NULL)
+        return 0;
+
+    fseek(f, 0, SEEK_END);
+    size = ftell(f);
+    fclose(f);
+
+    return size;
+}
+
 int CPULoadRom(const char* szFile)
 {
-    romSize = SIZE_ROM;
+    romSize = get_gba_rom_size(szFile);
     if (g_rom != NULL) {
         CPUCleanUp();
     }
 
     systemSaveUpdateCounter = SYSTEM_SAVE_NOT_UPDATED;
 
-    g_rom = (uint8_t*)malloc(SIZE_ROM);
+    g_rom = (uint8_t*)malloc(romSize);
     if (g_rom == NULL) {
         systemMessage(MSG_OUT_OF_MEMORY, N_("Failed to allocate memory for %s"),
             "ROM");
@@ -1539,11 +1750,37 @@ int CPULoadRom(const char* szFile)
         }
     }
 
+    memset(&GBAMatrix, 0, sizeof(GBAMatrix));
+    pristineRomSize = romSize;
+
     uint16_t* temp = (uint16_t*)(g_rom + ((romSize + 1) & ~1));
     int i;
-    for (i = (romSize + 1) & ~1; i < SIZE_ROM; i += 2) {
+    for (i = (romSize + 1) & ~1; i < romSize; i += 2) {
         WRITE16LE(temp, (i >> 1) & 0xFFFF);
         temp++;
+    }
+
+    char ident = 0;
+
+    if (romSize > SIZE_ROM) {
+        memcpy(&ident, &g_rom[0xAC], 1);
+
+        if (ident == 'M') {
+            g_rom2 = (uint8_t*)malloc(SIZE_ROM * 4);
+            if (!utilLoad(szFile,
+                    utilIsGBAImage,
+                    g_rom2,
+                    romSize)) {
+                free(g_rom2);
+                g_rom2 = NULL;
+            }
+
+            romSize = 0x01000000;
+
+            log("GBA Matrix detected");
+        } else {
+            romSize = SIZE_ROM;
+        }
     }
 
     g_bios = (uint8_t*)calloc(1, SIZE_BIOS);
@@ -1607,14 +1844,14 @@ int CPULoadRom(const char* szFile)
 
 int CPULoadRomData(const char* data, int size)
 {
-    romSize = SIZE_ROM;
+    romSize = size % 2 == 0 ? size : size + 1;
     if (g_rom != NULL) {
         CPUCleanUp();
     }
 
     systemSaveUpdateCounter = SYSTEM_SAVE_NOT_UPDATED;
 
-    g_rom = (uint8_t*)malloc(SIZE_ROM);
+    g_rom = (uint8_t*)malloc(romSize);
     if (g_rom == NULL) {
         systemMessage(MSG_OUT_OF_MEMORY, N_("Failed to allocate memory for %s"),
             "ROM");
@@ -1632,11 +1869,29 @@ int CPULoadRomData(const char* data, int size)
     romSize = size % 2 == 0 ? size : size + 1;
     memcpy(whereToLoad, data, size);
 
+    memset(&GBAMatrix, 0, sizeof(GBAMatrix));
+    pristineRomSize = romSize;
+
     uint16_t* temp = (uint16_t*)(g_rom + ((romSize + 1) & ~1));
     int i;
-    for (i = (romSize + 1) & ~1; i < SIZE_ROM; i += 2) {
+    for (i = (romSize + 1) & ~1; i < romSize; i += 2) {
         WRITE16LE(temp, (i >> 1) & 0xFFFF);
         temp++;
+    }
+
+    if (romSize > SIZE_ROM) {
+        char ident = 0;
+        memcpy(&ident, &g_rom[0xAC], 1);
+
+        if (ident == 'M') {
+            g_rom2 = (uint8_t *)malloc(romSize);
+            memcpy(g_rom2, data, size);
+            romSize = 0x01000000;
+
+            log("GBA Matrix detected");
+        } else {
+            romSize = SIZE_ROM;
+        }
     }
 
     g_bios = (uint8_t*)calloc(1, SIZE_BIOS);
@@ -3686,6 +3941,15 @@ void CPUReset()
     lastTime = systemGetClock();
 
     SWITicks = 0;
+
+    if (pristineRomSize > SIZE_ROM) {
+        char ident = 0;
+        memcpy(&ident, &g_rom[0xAC], 1);
+
+        if (ident == 'M') {
+            GBAMatrixReset(&GBAMatrix);
+        }
+    }
 }
 
 void CPUInterrupt()
@@ -3962,7 +4226,7 @@ void CPULoop(int ticks)
 #ifdef __LIBRETRO__
                                 uint8_t* dest = (uint8_t*)g_pix + 240 * VCOUNT;
 #else
-                                uint8_t* dest = (uint8_t*)g_pix + 242 * (VCOUNT + 1);
+                                uint8_t* dest = (uint8_t*)g_pix + 244 * (VCOUNT + 1);
 #endif
                                 for (int x = 0; x < 240;) {
                                     *dest++ = systemColorMap8[g_lineMix[x++] & 0xFFFF];
@@ -3985,9 +4249,9 @@ void CPULoop(int ticks)
                                     *dest++ = systemColorMap8[g_lineMix[x++] & 0xFFFF];
                                     *dest++ = systemColorMap8[g_lineMix[x++] & 0xFFFF];
                                 }
-// for filters that read past the screen
+                                // for filters that read past the screen
 #ifndef __LIBRETRO__
-                                *dest++ = 0;
+                                * dest++ = 0;
 #endif
                             } break;
                             case 16: {
@@ -4023,43 +4287,58 @@ void CPULoop(int ticks)
 #endif
                             } break;
                             case 24: {
-                                uint8_t* dest = (uint8_t*)g_pix + 240 * VCOUNT * 3;
+                                uint8_t* dest = (uint8_t*)g_pix + (240 * 3) * (VCOUNT + 1);
                                 for (int x = 0; x < 240;) {
-                                    *((uint32_t*)dest) = systemColorMap32[g_lineMix[x++] & 0xFFFF];
-                                    dest += 3;
-                                    *((uint32_t*)dest) = systemColorMap32[g_lineMix[x++] & 0xFFFF];
-                                    dest += 3;
-                                    *((uint32_t*)dest) = systemColorMap32[g_lineMix[x++] & 0xFFFF];
-                                    dest += 3;
-                                    *((uint32_t*)dest) = systemColorMap32[g_lineMix[x++] & 0xFFFF];
-                                    dest += 3;
+                                    uint32_t color = systemColorMap32[g_lineMix[x++] & 0xFFFF];
+                                    *dest++ = (uint8_t)(color & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 8) & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 16) & 0xFF);
+                                    color = systemColorMap32[g_lineMix[x++] & 0xFFFF];
+                                    *dest++ = (uint8_t)(color & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 8) & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 16) & 0xFF);
+                                    color = systemColorMap32[g_lineMix[x++] & 0xFFFF];
+                                    *dest++ = (uint8_t)(color & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 8) & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 16) & 0xFF);
+                                    color = systemColorMap32[g_lineMix[x++] & 0xFFFF];
+                                    *dest++ = (uint8_t)(color & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 8) & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 16) & 0xFF);
 
-                                    *((uint32_t*)dest) = systemColorMap32[g_lineMix[x++] & 0xFFFF];
-                                    dest += 3;
-                                    *((uint32_t*)dest) = systemColorMap32[g_lineMix[x++] & 0xFFFF];
-                                    dest += 3;
-                                    *((uint32_t*)dest) = systemColorMap32[g_lineMix[x++] & 0xFFFF];
-                                    dest += 3;
-                                    *((uint32_t*)dest) = systemColorMap32[g_lineMix[x++] & 0xFFFF];
-                                    dest += 3;
+                                    color = systemColorMap32[g_lineMix[x++] & 0xFFFF];
+                                    *dest++ = (uint8_t)(color & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 8) & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 16) & 0xFF);
+                                    color = systemColorMap32[g_lineMix[x++] & 0xFFFF];
+                                    *dest++ = (uint8_t)(color & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 8) & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 16) & 0xFF);
+                                    color = systemColorMap32[g_lineMix[x++] & 0xFFFF];
+                                    *dest++ = (uint8_t)(color & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 8) & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 16) & 0xFF);
+                                    color = systemColorMap32[g_lineMix[x++] & 0xFFFF];
+                                    *dest++ = (uint8_t)(color & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 8) & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 16) & 0xFF);
 
-                                    *((uint32_t*)dest) = systemColorMap32[g_lineMix[x++] & 0xFFFF];
-                                    dest += 3;
-                                    *((uint32_t*)dest) = systemColorMap32[g_lineMix[x++] & 0xFFFF];
-                                    dest += 3;
-                                    *((uint32_t*)dest) = systemColorMap32[g_lineMix[x++] & 0xFFFF];
-                                    dest += 3;
-                                    *((uint32_t*)dest) = systemColorMap32[g_lineMix[x++] & 0xFFFF];
-                                    dest += 3;
-
-                                    *((uint32_t*)dest) = systemColorMap32[g_lineMix[x++] & 0xFFFF];
-                                    dest += 3;
-                                    *((uint32_t*)dest) = systemColorMap32[g_lineMix[x++] & 0xFFFF];
-                                    dest += 3;
-                                    *((uint32_t*)dest) = systemColorMap32[g_lineMix[x++] & 0xFFFF];
-                                    dest += 3;
-                                    *((uint32_t*)dest) = systemColorMap32[g_lineMix[x++] & 0xFFFF];
-                                    dest += 3;
+                                    color = systemColorMap32[g_lineMix[x++] & 0xFFFF];
+                                    *dest++ = (uint8_t)(color & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 8) & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 16) & 0xFF);
+                                    color = systemColorMap32[g_lineMix[x++] & 0xFFFF];
+                                    *dest++ = (uint8_t)(color & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 8) & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 16) & 0xFF);
+                                    color = systemColorMap32[g_lineMix[x++] & 0xFFFF];
+                                    *dest++ = (uint8_t)(color & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 8) & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 16) & 0xFF);
+                                    color = systemColorMap32[g_lineMix[x++] & 0xFFFF];
+                                    *dest++ = (uint8_t)(color & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 8) & 0xFF);
+                                    *dest++ = (uint8_t)((color >> 16) & 0xFF);
                                 }
                             } break;
                             case 32: {

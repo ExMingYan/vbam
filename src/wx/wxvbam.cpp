@@ -223,7 +223,7 @@ static void get_config_path(wxPathList& path, bool exists = true)
     if (!debug_dumped) {
         wxLogDebug(wxT("GetUserLocalDataDir(): %s"), stdp.GetUserLocalDataDir().c_str());
         wxLogDebug(wxT("GetUserDataDir(): %s"), stdp.GetUserDataDir().c_str());
-        wxLogDebug(wxT("GetLocalizedResourcesDir(wxGetApp().locale.GetCanonicalName()): %s"), stdp.GetLocalizedResourcesDir(wxGetApp().locale.GetCanonicalName()).c_str());
+        wxLogDebug(wxT("GetLocalizedResourcesDir(wxvbam_locale->GetCanonicalName()): %s"), stdp.GetLocalizedResourcesDir(wxvbam_locale->GetCanonicalName()).c_str());
         wxLogDebug(wxT("GetResourcesDir(): %s"), stdp.GetResourcesDir().c_str());
         wxLogDebug(wxT("GetDataDir(): %s"), stdp.GetDataDir().c_str());
         wxLogDebug(wxT("GetLocalDataDir(): %s"), stdp.GetLocalDataDir().c_str());
@@ -257,7 +257,7 @@ static void get_config_path(wxPathList& path, bool exists = true)
     // NOTE: this does not support XDG (freedesktop.org) paths
     add_path(GetUserLocalDataDir());
     add_path(GetUserDataDir());
-    add_path(GetLocalizedResourcesDir(wxGetApp().locale.GetCanonicalName()));
+    add_path(GetLocalizedResourcesDir(wxvbam_locale->GetCanonicalName()));
     add_path(GetResourcesDir());
     add_path(GetDataDir());
     add_path(GetLocalDataDir());
@@ -277,7 +277,7 @@ static void tack_full_path(wxString& s, const wxString& app = wxEmptyString)
 wxvbamApp::wxvbamApp()
     : wxApp(),
       pending_fullscreen(false),
-      frame(nullptr),
+      frame(NULL),
       using_wayland(false),
       emulated_gamepad_(std::bind(&wxvbamApp::bindings, this)),
       sdl_poller_(this),
@@ -352,17 +352,36 @@ wxString wxvbamApp::GetAbsolutePath(wxString path)
     return path;
 }
 
+int language = wxLANGUAGE_DEFAULT;
+wxLocale *wxvbam_locale = NULL;
+
 bool wxvbamApp::OnInit() {
     using_wayland = IsWayland();
+
+#if ((wxMAJOR_VERSION == 3) && (wxMINOR_VERSION >= 3)) || (wxMAJOR_VERSION > 3)
+    SetAppearance(Appearance::System);
+#endif
 
     // use consistent names for config, DO NOT TRANSLATE
     SetAppName("visualboyadvance-m");
 #if (wxMAJOR_VERSION >= 3)
     SetAppDisplayName("VisualBoyAdvance-M");
 #endif
-    // load system default locale, if available
-    locale.Init();
-    locale.AddCatalog("wxvbam");
+
+    wxvbam_locale = new wxLocale;
+
+    language = OPTION(kLocale);
+
+    if (language != wxLANGUAGE_DEFAULT) {
+        wxvbam_locale->Init(language, wxLOCALE_LOAD_DEFAULT);
+    } else {
+        wxvbam_locale->Init();
+    }
+
+    // load selected language
+
+    wxvbam_locale->AddCatalog("wxvbam");
+
     // make built-in xrc file available
     // this has to be done before parent OnInit() so xrc dump works
     wxFileSystem::AddHandler(new wxMemoryFSHandler);
@@ -463,6 +482,30 @@ bool wxvbamApp::OnInit() {
 
     // Load the default options.
     load_opts(!config_file_.Exists());
+
+    if (wxvbam_locale)
+        wxDELETE(wxvbam_locale);
+
+    wxvbam_locale = new wxLocale;
+
+    language = OPTION(kLocale);
+
+    if (language != wxLANGUAGE_DEFAULT) {
+        wxvbam_locale->Init(language, wxLOCALE_LOAD_DEFAULT);
+    } else {
+        wxvbam_locale->Init();
+    }
+
+    fprintf(stderr, "Language: %d\n", language);
+
+    // load selected language
+
+#ifdef _WIN32
+    if (OPTION(kExternalTranslations) == false)
+        wxTranslations::Get()->SetLoader(new wxResourceTranslationsLoader);
+#endif
+
+    wxvbam_locale->AddCatalog("wxvbam");
 
     // wxGLCanvas segfaults under wayland before wx 3.2
 #if defined(HAVE_WAYLAND_SUPPORT) && !defined(HAVE_WAYLAND_EGL)
@@ -586,7 +629,7 @@ bool wxvbamApp::OnInit() {
     const bool is_maximized = OPTION(kGeomIsMaximized);
 
     // Create the main window.
-    frame = wxDynamicCast(xr->LoadFrame(nullptr, "MainFrame"), MainFrame);
+    frame = wxDynamicCast(xr->LoadFrame(NULL, "MainFrame"), MainFrame);
     if (!frame) {
         wxLogError(_("Could not create main window"));
         return false;
@@ -609,6 +652,13 @@ bool wxvbamApp::OnInit() {
         frame->ShowFullScreen(is_fullscreen);
 
     frame->Show(true);
+    
+    // Windows can render the taskbar icon late if this is done in MainFrame
+    // It may also not update at all until the Window has been minimized/restored
+    // This seems timing related, possibly based on HWND
+    // So do this here since it reliably draws the Taskbar icon on Window creation.
+    frame->BindAppIcon();  
+
 
 #ifndef NO_ONLINEUPDATES
     initAutoupdater();
@@ -873,12 +923,12 @@ wxEvtHandler* wxvbamApp::event_handler() {
     }
 
     if (!frame) {
-        return nullptr;
+        return NULL;
     }
 
     auto panel = frame->GetPanel();
     if (!panel || !panel->panel) {
-        return nullptr;
+        return NULL;
     }
 
     if (OPTION(kUIAllowJoystickBackgroundInput) || OPTION(kUIAllowKeyboardBackgroundInput)) {
@@ -886,7 +936,7 @@ wxEvtHandler* wxvbamApp::event_handler() {
         return panel->panel->GetWindow()->GetEventHandler();
     }
 
-    return nullptr;
+    return NULL;
 }
 
 MainFrame::MainFrame()
@@ -1208,8 +1258,8 @@ void MainFrame::ResetMenuAccelerators() {
 
 void MainFrame::MenuPopped(wxMenuEvent& evt) {
     // We consider the menu closed when the main menubar or system menu is closed, not any submenus.
-    // On Windows nullptr is the system menu.
-    if (evt.GetEventType() == wxEVT_MENU_CLOSE && (evt.GetMenu() == nullptr || evt.GetMenu()->GetMenuBar() == GetMenuBar()))
+    // On Windows NULL is the system menu.
+    if (evt.GetEventType() == wxEVT_MENU_CLOSE && (evt.GetMenu() == NULL || evt.GetMenu()->GetMenuBar() == GetMenuBar()))
         SetMenusOpened(false);
     else
         SetMenusOpened(true);
@@ -1442,6 +1492,7 @@ int wxvbamApp::FilterEvent(wxEvent& event)
     return user_input_event.FilterProcessedInput(user_input.value());
 }
 
+#ifndef VBAM_WX_MAC_PATCHED_FOR_ALERT_SOUND
 bool wxvbamApp::ProcessEvent(wxEvent& event) {
     if (event.GetEventType() == wxEVT_KEY_DOWN) {
         // First, figure out if the focused window can process the key down event.
@@ -1461,3 +1512,4 @@ bool wxvbamApp::ProcessEvent(wxEvent& event) {
     }
     return wxApp::ProcessEvent(event);
 }
+#endif
